@@ -247,9 +247,10 @@ Return (STATUS-CODE . JSON-BODY) or (STATUS-CODE . nil)."
     (goto-char (point-min))
     (if (re-search-forward "\r?\n\r?\n" nil t)
         (condition-case nil
-            (let ((body-start (point)))
-              (decode-coding-region body-start (point-max) 'utf-8)
-              (goto-char body-start)
+            (progn
+              ;; url.el returns a unibyte buffer; convert to
+              ;; multibyte so json-read decodes UTF-8 correctly.
+              (set-buffer-multibyte t)
               (let ((json-object-type 'alist)
                     (json-array-type 'list)
                     (json-key-type 'symbol))
