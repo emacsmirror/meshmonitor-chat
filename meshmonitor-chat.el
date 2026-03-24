@@ -1038,7 +1038,7 @@ Return alist of (NODE-ID . LAST-MESSAGE-ALIST)."
   (meshmonitor-chat--ensure-connected)
   (let ((buf (meshmonitor-chat--get-or-create-buffer
               'channel channel-id)))
-    (pop-to-buffer buf)
+    (switch-to-buffer buf)
     (meshmonitor-chat--api-messages
      `((channel . ,channel-id)
        (limit . ,meshmonitor-chat-message-limit))
@@ -1052,7 +1052,7 @@ Return alist of (NODE-ID . LAST-MESSAGE-ALIST)."
   "Open a DM chat buffer with NODE-ID and load history."
   (meshmonitor-chat--ensure-connected)
   (let ((buf (meshmonitor-chat--get-or-create-buffer 'dm node-id)))
-    (pop-to-buffer buf)
+    (switch-to-buffer buf)
     (let ((all-messages nil)
           (pending 2))
       (let ((handler
