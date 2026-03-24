@@ -1160,7 +1160,7 @@ Return alist of (NODE-ID . LAST-MESSAGE-ALIST)."
     (with-current-buffer buf
       (unless (eq major-mode 'meshmonitor-chat-channel-list-mode)
         (meshmonitor-chat-channel-list-mode)))
-    (pop-to-buffer buf)
+    (switch-to-buffer buf)
     (meshmonitor-chat--fetch-channels
      (lambda (_channels)
        (when (buffer-live-p buf)
@@ -1176,7 +1176,7 @@ Return alist of (NODE-ID . LAST-MESSAGE-ALIST)."
     (with-current-buffer buf
       (unless (eq major-mode 'meshmonitor-chat-dm-list-mode)
         (meshmonitor-chat-dm-list-mode)))
-    (pop-to-buffer buf)
+    (switch-to-buffer buf)
     (meshmonitor-chat--fetch-dm-conversations
      (lambda (partners)
        (when (buffer-live-p buf)
