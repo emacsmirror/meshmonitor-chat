@@ -247,10 +247,13 @@ Return (STATUS-CODE . JSON-BODY) or (STATUS-CODE . nil)."
     (goto-char (point-min))
     (if (re-search-forward "\r?\n\r?\n" nil t)
         (condition-case nil
-            (let ((json-object-type 'alist)
-                  (json-array-type 'list)
-                  (json-key-type 'symbol))
-              (cons status-code (json-read)))
+            (let ((body-start (point)))
+              (decode-coding-region body-start (point-max) 'utf-8)
+              (goto-char body-start)
+              (let ((json-object-type 'alist)
+                    (json-array-type 'list)
+                    (json-key-type 'symbol))
+                (cons status-code (json-read))))
           (error (cons status-code nil)))
       (cons status-code nil))))
 
