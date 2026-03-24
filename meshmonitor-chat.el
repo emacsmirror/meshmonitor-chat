@@ -489,8 +489,44 @@ Provides an input prompt at the bottom with message history above."
   (setq-local meshmonitor-chat--pending-deliveries nil)
   (setq-local meshmonitor-chat--last-timestamp nil)
   (setq mode-line-process
-        '(" " (:eval (if meshmonitor-chat--connected
-                         "[on]" "[off]")))))
+        '(" " (:eval (meshmonitor-chat--mode-line-status))))
+  (add-hook 'post-command-hook
+            #'meshmonitor-chat--update-mode-line nil t))
+
+(defvar meshmonitor-chat--max-message-bytes 600
+  "Maximum message size in bytes (3 parts x ~200 bytes).")
+
+(defun meshmonitor-chat--input-byte-length ()
+  "Return the byte length of the current input text."
+  (if (and meshmonitor-chat--prompt-end
+           (marker-position meshmonitor-chat--prompt-end))
+      (string-bytes
+       (buffer-substring-no-properties
+        meshmonitor-chat--prompt-end (point-max)))
+    0))
+
+(defun meshmonitor-chat--mode-line-status ()
+  "Return mode-line status string with connection and input size."
+  (let* ((conn (if meshmonitor-chat--connected "[on]" "[off]"))
+         (len (meshmonitor-chat--input-byte-length)))
+    (if (> len 0)
+        (let ((face (cond
+                     ((> len meshmonitor-chat--max-message-bytes)
+                      'error)
+                     ((> len 200) 'warning)
+                     (t nil))))
+          (format "%s %s"
+                  conn
+                  (if face
+                      (propertize (format "[%d/%d B]" len
+                                         meshmonitor-chat--max-message-bytes)
+                                 'face face)
+                    (format "[%d B]" len))))
+      conn)))
+
+(defun meshmonitor-chat--update-mode-line ()
+  "Force mode-line update when input changes."
+  (force-mode-line-update))
 
 (defun meshmonitor-chat--prompt-string ()
   "Return the prompt string for the current buffer."
@@ -734,16 +770,41 @@ TS is the timestamp, SENDER the name, TEXT the content."
         (target meshmonitor-chat--target)
         (ttype meshmonitor-chat--target-type))
     (let ((cb (lambda (result)
-                (if (and result (< (car result) 400))
-                    (let* ((data (alist-get 'data (cdr result)))
-                           (req-id (alist-get 'requestId data)))
+                (let ((status (if result (car result) 0))
+                      (data (alist-get 'data (cdr result))))
+                  (cond
+                   ;; 201: sent directly.
+                   ((and result (< status 400))
+                    (let ((req-id (alist-get 'requestId data))
+                          (parts (or (alist-get 'messageCount data)
+                                     1)))
                       (meshmonitor-chat--insert-sent-msg
-                       buf text req-id))
-                  (meshmonitor-chat--insert-msg
-                   buf nil nil
-                   (format "Send failed (HTTP %s)"
-                           (if result (car result) "timeout"))
-                   nil t)))))
+                       buf text req-id)
+                      ;; Inform if message was split (202).
+                      (when (> parts 1)
+                        (meshmonitor-chat--insert-msg
+                         buf nil nil
+                         (format "Message split into %d parts"
+                                 parts)
+                         nil t))))
+                   ;; 413: message too long.
+                   ((and result (= status 413))
+                    (meshmonitor-chat--insert-msg
+                     buf nil nil
+                     "Message too long (max ~600 bytes, 3 parts)"
+                     nil t))
+                   ;; 503: node not connected.
+                   ((and result (= status 503))
+                    (meshmonitor-chat--insert-msg
+                     buf nil nil
+                     "Meshtastic node not connected" nil t))
+                   ;; Other errors.
+                   (t
+                    (meshmonitor-chat--insert-msg
+                     buf nil nil
+                     (format "Send failed (HTTP %s)"
+                             (or status "timeout"))
+                     nil t)))))))
       (pcase ttype
         ('channel
          (meshmonitor-chat--api-send text target nil cb))
