@@ -4,7 +4,7 @@
 
 ;; Author: Andros Fenollosa <andros@fenollosa.email>
 ;; Maintainer: Andros Fenollosa <andros@fenollosa.email>
-;; Version: 0.1.0
+;; Version: 1.0.0
 ;; Package-Requires: ((emacs "28.1"))
 ;; Keywords: comm
 ;; URL: https://git.andros.dev/andros/meshmonitor-chat.el

@@ -6,6 +6,46 @@ Requires Emacs 28.1 or later.
 
 Connects directly to the [MeshMonitor REST API](https://meshmonitor.org/) using a Bearer token. No Meshtastic client or external libraries required.
 
+## Buffers
+
+### Channel list (`M-x meshmonitor-chat-channels`)
+
+```
+  ID  Name          Role
+  0   MediumFast    Primary
+  1   Iberia        Secondary
+  2   Valencia      Secondary
+```
+
+### Node list (`M-x meshmonitor-chat-nodes`)
+
+```
+  Hops  Name                           Node ID         Last heard
+  1     Massimo 66 T114 Denia          !0cfbd0fe       2h
+  1     RAY1 Solar                     !17639644       5m
+  2     LinceTango                     !acaba0c4       now
+  3     EA5iso-v4                      !9e9d5524       1h
+  4     Zona-Castellon                 !f125d5b2       3d
+```
+
+### Chat buffer (channel or DM)
+
+```
+[21:54] <EA5iso-v4> Buenas noches
+[21:54] <MobyDick Station> Buenas noches!!
+[21:55] <30rojo4> Buenas noches desde ontinyent
+[21:55] <Paterna> Buenas noches
+[21:58] <lorakotick nktk> Buenas noches. Catarroja
+[22:00] <EA5iso-v4> Que bien cuanta peña
+[22:01] <lorakotick nktk> Me gusta ver que LoRa esta viva. Muy viva
+[23:03] <MikeLima> Ya toca dormir. Buenas noches
+[07:52] <LinceTango> Buenos dias comunidad mesh!
+[08:03] <JL EA5KAE> Vamos con la semana
+[08:07] <LinceTango> Va a ser dura?
+[08:07] <LinceTango> Hola a todos ✓
+#Valencia> _
+```
+
 ## Features
 
 - **Channel list**: browse available Meshtastic channels in a tabulated buffer.
