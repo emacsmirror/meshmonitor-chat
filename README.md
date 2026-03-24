@@ -6,6 +6,22 @@ Requires Emacs 28.1 or later.
 
 Connects directly to the [MeshMonitor REST API](https://meshmonitor.org/) using a Bearer token. No Meshtastic client or external libraries required.
 
+## How it works
+
+```
+  LoRa Radio            MeshMonitor             Emacs
+ +-----------+      +----------------+      +------------------+
+ | Meshtastic|----->| Web server     |----->| meshmonitor-chat |
+ |   Node    |<-----| REST API       |<-----| (this package)   |
+ +-----------+      +----------------+      +------------------+
+   Physical           Proxy + DB              Chat buffers
+   device             (port 3000)             Polling / Send
+```
+
+1. A **Meshtastic node** sends and receives messages over LoRa radio.
+2. **MeshMonitor** connects to the node (TCP/serial/BLE), caches messages in a database and exposes a REST API.
+3. **meshmonitor-chat.el** talks to the REST API to list channels, fetch messages and send new ones.
+
 ## Buffers
 
 ### Channel list (`M-x meshmonitor-chat-channels`)
