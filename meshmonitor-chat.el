@@ -1,11 +1,13 @@
 ;;; meshmonitor-chat.el --- Chat client for MeshMonitor (Meshtastic) -*- lexical-binding: t; -*-
 
-;; Copyright (C) 2026
+;; Copyright (C) 2026  Andros Fenollosa
 
+;; Author: Andros Fenollosa <andros@fenollosa.email>
+;; Maintainer: Andros Fenollosa <andros@fenollosa.email>
 ;; Version: 0.1.0
 ;; Package-Requires: ((emacs "28.1"))
 ;; Keywords: comm
-;; URL: https://github.com/andros21/meshmonitor-chat.el
+;; URL: https://git.andros.dev/andros/meshmonitor-chat.el
 
 ;;; Commentary:
 
@@ -16,6 +18,7 @@
 ;; `meshmonitor-chat-token' in your init file.  Then:
 ;;
 ;;   M-x meshmonitor-chat-channels       - list channels
+;;   M-x meshmonitor-chat-nodes          - list nodes by hops
 ;;   M-x meshmonitor-chat-direct-messages - list DM conversations
 
 ;;; Code:
