@@ -12,38 +12,38 @@ Connects directly to the [MeshMonitor REST API](https://meshmonitor.org/) using 
 
 ```
   ID  Name          Role
-  0   MediumFast    Primary
-  1   Iberia        Secondary
-  2   Valencia      Secondary
+  0   LongFast      Primary
+  1   HikingGroup   Secondary
+  2   EmergNet      Secondary
 ```
 
 ### Node list (`M-x meshmonitor-chat-nodes`)
 
 ```
   Hops  Name                           Node ID         Last heard
-  1     Massimo 66 T114 Denia          !0cfbd0fe       2h
-  1     RAY1 Solar                     !17639644       5m
-  2     LinceTango                     !acaba0c4       now
-  3     EA5iso-v4                      !9e9d5524       1h
-  4     Zona-Castellon                 !f125d5b2       3d
+  1     Hilltop Relay                  !a1b2c3d4       5m
+  1     Solar Node 7                   !d4e5f6a7       12m
+  2     BaseStation K9                 !b8c9d0e1       now
+  3     Mountain Peak                  !f2a3b4c5       1h
+  4     River Bridge                   !e6f7a8b9       3d
 ```
 
 ### Chat buffer (channel or DM)
 
 ```
-[21:54] <EA5iso-v4> Buenas noches
-[21:54] <MobyDick Station> Buenas noches!!
-[21:55] <30rojo4> Buenas noches desde ontinyent
-[21:55] <Paterna> Buenas noches
-[21:58] <lorakotick nktk> Buenas noches. Catarroja
-[22:00] <EA5iso-v4> Que bien cuanta peña
-[22:01] <lorakotick nktk> Me gusta ver que LoRa esta viva. Muy viva
-[23:03] <MikeLima> Ya toca dormir. Buenas noches
-[07:52] <LinceTango> Buenos dias comunidad mesh!
-[08:03] <JL EA5KAE> Vamos con la semana
-[08:07] <LinceTango> Va a ser dura?
-[08:07] <LinceTango> Hola a todos ✓
-#Valencia> _
+[08:15] <Hilltop Relay> Good morning mesh!
+[08:20] <BaseStation K9> Morning! Signal is great today
+[08:21] <Solar Node 7> Copy that, 3 hops from here
+[08:45] <Mountain Peak> Anyone near the trailhead?
+[09:02] <Hilltop Relay> I can see 12 nodes from up here
+[09:05] <BaseStation K9> Nice coverage, checking in from base
+[09:30] <River Bridge> Just set up a new repeater
+[09:31] <Solar Node 7> Welcome aboard!
+[09:33] <River Bridge> Thanks, running on solar
+[09:40] <Mountain Peak> Can you relay to the valley?
+[09:41] <BaseStation K9> Testing now ·
+[09:42] <BaseStation K9> Yes, confirmed ✓
+#LongFast> _
 ```
 
 ## Features
