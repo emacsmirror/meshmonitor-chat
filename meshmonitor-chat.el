@@ -1031,6 +1031,89 @@ Return alist of (NODE-ID . LAST-MESSAGE-ALIST)."
          partners))
   (tabulated-list-print t))
 
+;;;; Node list mode
+
+(defvar meshmonitor-chat-node-list-mode-map
+  (let ((map (make-sparse-keymap)))
+    (set-keymap-parent map tabulated-list-mode-map)
+    (define-key map (kbd "RET")
+                #'meshmonitor-chat-node-list-open)
+    (define-key map (kbd "g")
+                #'meshmonitor-chat-node-list-refresh)
+    map)
+  "Keymap for `meshmonitor-chat-node-list-mode'.")
+
+(define-derived-mode meshmonitor-chat-node-list-mode
+  tabulated-list-mode "MeshNodes"
+  "Major mode for listing MeshMonitor nodes sorted by hops."
+  :group 'meshmonitor-chat
+  (setq tabulated-list-format
+        [("Hops" 5 meshmonitor-chat--sort-by-hops)
+         ("Name" 30 t)
+         ("Node ID" 14 t)
+         ("Last heard" 12 t)])
+  (setq tabulated-list-padding 2)
+  (setq tabulated-list-sort-key '("Hops"))
+  (tabulated-list-init-header))
+
+(defun meshmonitor-chat--sort-by-hops (a b)
+  "Sort entries A and B by hop count numerically."
+  (let ((ha (string-to-number (aref (cadr a) 0)))
+        (hb (string-to-number (aref (cadr b) 0))))
+    (< ha hb)))
+
+(defun meshmonitor-chat-node-list-open ()
+  "Open DM chat with the node at point."
+  (interactive)
+  (let ((entry (tabulated-list-get-entry)))
+    (when entry
+      (meshmonitor-chat-open-dm (aref entry 2)))))
+
+(defun meshmonitor-chat-node-list-refresh ()
+  "Refresh the node list from the server."
+  (interactive)
+  (meshmonitor-chat--fetch-nodes
+   (lambda ()
+     (let ((buf (get-buffer "*MeshMonitor: Nodes*")))
+       (when (buffer-live-p buf)
+         (with-current-buffer buf
+           (meshmonitor-chat--populate-node-list)))))))
+
+(defun meshmonitor-chat--format-last-heard (ts)
+  "Format last heard timestamp TS as relative time."
+  (if (and ts (numberp ts) (> ts 0))
+      (let* ((secs (- (float-time) (if (> ts 9999999999)
+                                       (/ ts 1000) ts)))
+             (mins (/ secs 60))
+             (hours (/ mins 60))
+             (days (/ hours 24)))
+        (cond
+         ((< mins 1) "now")
+         ((< mins 60) (format "%dm" (truncate mins)))
+         ((< hours 24) (format "%dh" (truncate hours)))
+         (t (format "%dd" (truncate days)))))
+    "?"))
+
+(defun meshmonitor-chat--populate-node-list ()
+  "Populate the current buffer with cached node data."
+  (let ((entries nil))
+    (maphash
+     (lambda (key node)
+       (when (string-prefix-p "!" key)
+         (let ((hops (or (alist-get 'hopsAway node) 99))
+               (name (or (alist-get 'longName node) ""))
+               (last-heard (alist-get 'lastHeard node)))
+           (push (list key
+                       (vector (number-to-string hops)
+                               name
+                               key
+                               (meshmonitor-chat--format-last-heard
+                                last-heard)))
+                 entries))))
+     meshmonitor-chat--nodes)
+    (setq tabulated-list-entries entries)
+    (tabulated-list-print t)))
+
 ;;;; Open chat buffers
 
 (defun meshmonitor-chat-open-channel (channel-id)
@@ -1182,6 +1265,22 @@ Return alist of (NODE-ID . LAST-MESSAGE-ALIST)."
        (when (buffer-live-p buf)
          (with-current-buffer buf
            (meshmonitor-chat--populate-dm-list partners)))))))
+
+;;;###autoload
+(defun meshmonitor-chat-nodes ()
+  "Show all MeshMonitor nodes sorted by hop count."
+  (interactive)
+  (meshmonitor-chat--ensure-connected)
+  (let ((buf (get-buffer-create "*MeshMonitor: Nodes*")))
+    (with-current-buffer buf
+      (unless (eq major-mode 'meshmonitor-chat-node-list-mode)
+        (meshmonitor-chat-node-list-mode)))
+    (switch-to-buffer buf)
+    (meshmonitor-chat--fetch-nodes
+     (lambda ()
+       (when (buffer-live-p buf)
+         (with-current-buffer buf
+           (meshmonitor-chat--populate-node-list)))))))
 
 (provide 'meshmonitor-chat)
 ;;; meshmonitor-chat.el ends here
