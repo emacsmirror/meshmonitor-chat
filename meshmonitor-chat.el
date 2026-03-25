@@ -71,6 +71,14 @@ When set, username/password login is skipped."
   "Seconds between polling for new messages."
   :type 'integer)
 
+(defcustom meshmonitor-chat-notify t
+  "Non-nil means show desktop notifications for new messages."
+  :type 'boolean)
+
+(defcustom meshmonitor-chat-notify-command "notify-send"
+  "Command used to send desktop notifications."
+  :type 'string)
+
 (defcustom meshmonitor-chat-message-limit 50
   "Number of messages to fetch per request."
   :type 'integer)
@@ -481,6 +489,7 @@ Call CALLBACK with (STATUS . BODY)."
     (define-key map (kbd "RET") #'meshmonitor-chat-send-input)
     (define-key map (kbd "M-p") #'meshmonitor-chat-previous-input)
     (define-key map (kbd "M-n") #'meshmonitor-chat-next-input)
+    (define-key map (kbd "C-c C-r") #'meshmonitor-chat-resend)
     map)
   "Keymap for `meshmonitor-chat-mode'.")
 
@@ -623,17 +632,18 @@ TEXT is the message, REQUEST-ID is used for delivery tracking."
           (goto-char meshmonitor-chat--prompt-start)
           ;; Message text.
           (insert
-           (propertize
-            (concat
              (propertize
-              (format "[%s] "
-                      (format-time-string
-                       meshmonitor-chat-timestamp-format))
-              'face 'meshmonitor-chat-timestamp-face)
-             (propertize (format "<%s> " sender)
-                         'face 'meshmonitor-chat-nick-self-face)
-             text " ")
-            'read-only t 'rear-nonsticky t 'front-sticky t))
+              (concat
+               (propertize
+                (format "[%s] "
+                        (format-time-string
+                         meshmonitor-chat-timestamp-format))
+                'face 'meshmonitor-chat-timestamp-face)
+               (propertize (format "<%s> " sender)
+                           'face 'meshmonitor-chat-nick-self-face)
+               text " ")
+              'read-only t 'rear-nonsticky t 'front-sticky t
+              'meshmonitor-chat-msg-text text))
           ;; Delivery icon.
           (let ((icon-pos (point)))
             (insert (meshmonitor-chat--delivery-icon 'pending))
@@ -706,7 +716,14 @@ MESSAGES is a list of message alists from the API."
                     (meshmonitor-chat--insert-sent-msg-with-state
                      buffer ts sender text delivery)
                   (meshmonitor-chat--insert-msg
-                   buffer ts sender text selfp))
+                   buffer ts sender text selfp)
+                  ;; Notify for messages from others when not visible.
+                  (unless (or selfp (get-buffer-window buffer))
+                    (with-current-buffer buffer
+                      (meshmonitor-chat--notify
+                       sender text
+                       meshmonitor-chat--target-type
+                       meshmonitor-chat--target))))
                 (when id
                   (with-current-buffer buffer
                     (puthash id t meshmonitor-chat--seen-ids)))
@@ -850,6 +867,16 @@ TS is the timestamp, SENDER the name, TEXT the content."
                  (ring-length meshmonitor-chat--input-ring)))
       (insert (ring-ref meshmonitor-chat--input-ring
                         meshmonitor-chat--input-ring-index)))))
+
+(defun meshmonitor-chat-resend ()
+  "Resend the message at point."
+  (interactive)
+  (let ((text (get-text-property (point) 'meshmonitor-chat-msg-text)))
+    (if text
+        (progn
+          (goto-char meshmonitor-chat--prompt-end)
+          (meshmonitor-chat--send-text text))
+      (user-error "No sent message at point"))))
 
 ;;;; Buffer management
 
@@ -1339,6 +1366,25 @@ Each element of UNREAD is (NODE-ID COUNT LAST-MSG)."
                     (when msgs
                       (meshmonitor-chat--render-messages
                        buf msgs)))))))))))))
+
+;;;; Notifications
+
+(defun meshmonitor-chat--notify (sender text target-type target)
+  "Show desktop notification for a message from SENDER.
+TEXT is the message content, TARGET-TYPE and TARGET identify the chat."
+  (when meshmonitor-chat-notify
+    (let ((title (pcase target-type
+                   ('channel (format "#%s"
+                                     (meshmonitor-chat--channel-name
+                                      target)))
+                   ('dm sender)
+                   (_ "MeshMonitor")))
+          (body (truncate-string-to-width
+                 (format "%s: %s" sender text) 100 nil nil "...")))
+      (start-process "meshmonitor-notify" nil
+                     meshmonitor-chat-notify-command
+                     "--expire-time" "5000"
+                     title body))))
 
 ;;;; Cleanup
 

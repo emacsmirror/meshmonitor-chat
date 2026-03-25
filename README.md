@@ -44,6 +44,14 @@ Connects directly to the [MeshMonitor REST API](https://meshmonitor.org/) using 
   4     River Bridge                   !e6f7a8b9       3d
 ```
 
+### Unread messages (`M-x meshmonitor-chat-unread`)
+
+```
+  Unread  Name                       Node ID         Last message
+  3       Hilltop Relay              !a1b2c3d4       Are you there?
+  1       River Bridge               !e6f7a8b9       New repeater is up
+```
+
 ### Chat buffer (channel or DM)
 
 ```
@@ -70,6 +78,8 @@ Connects directly to the [MeshMonitor REST API](https://meshmonitor.org/) using 
 - **Direct messages**: list active DM conversations with other nodes.
 - **Chat buffers**: read and send messages with an ERC-like prompt interface.
 - **Delivery confirmation**: sent messages display `·` (pending), `✓` (confirmed) or `✗` (failed).
+- **Resend**: place cursor on a failed message and press `C-c C-r` to resend.
+- **Desktop notifications**: get notified when new messages arrive in background buffers.
 - **Polling**: automatic periodic fetch of new messages in open chat buffers.
 - **Input size indicator**: mode-line shows byte count with warnings for large messages (LoRa limit ~200 bytes per part, max 3 parts).
 - **UTF-8 support**: correctly displays accented characters and emojis from mesh nodes.
@@ -90,9 +100,10 @@ Connects directly to the [MeshMonitor REST API](https://meshmonitor.org/) using 
 
 | Key   | Description                  |
 |-------|------------------------------|
-| `RET` | Send message                 |
-| `M-p` | Previous input from history  |
-| `M-n` | Next input from history      |
+| `RET`     | Send message                 |
+| `M-p`     | Previous input from history  |
+| `M-n`     | Next input from history      |
+| `C-c C-r` | Resend message at point      |
 
 ## Installation
 
@@ -165,6 +176,8 @@ Key options:
 - `meshmonitor-chat-poll-interval` (default `10`): seconds between polling for new messages.
 - `meshmonitor-chat-message-limit` (default `50`): number of messages to fetch per request.
 - `meshmonitor-chat-timestamp-format` (default `"%H:%M"`): format for message timestamps.
+- `meshmonitor-chat-notify` (default `t`): enable desktop notifications for new messages.
+- `meshmonitor-chat-notify-command` (default `"notify-send"`): command for desktop notifications.
 
 Username/password authentication is also supported via `meshmonitor-chat-username` and `meshmonitor-chat-password` if no token is provided.
 
