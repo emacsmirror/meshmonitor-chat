@@ -28,6 +28,7 @@
 (require 'url)
 (require 'url-http)
 (require 'cl-lib)
+(require 'notifications)
 (require 'ring)
 (require 'seq)
 
@@ -74,10 +75,6 @@ When set, username/password login is skipped."
 (defcustom meshmonitor-chat-notify t
   "Non-nil means show desktop notifications for new messages."
   :type 'boolean)
-
-(defcustom meshmonitor-chat-notify-command "notify-send"
-  "Command used to send desktop notifications."
-  :type 'string)
 
 (defcustom meshmonitor-chat-message-limit 50
   "Number of messages to fetch per request."
@@ -1393,10 +1390,12 @@ TEXT is the message content, TARGET-TYPE and TARGET identify the chat."
                    (_ "MeshMonitor")))
           (body (truncate-string-to-width
                  (format "%s: %s" sender text) 100 nil nil "...")))
-      (start-process "meshmonitor-notify" nil
-                     meshmonitor-chat-notify-command
-                     "--expire-time" "5000"
-                     title body))))
+      (notifications-notify
+       :title title
+       :body body
+       :app-name "MeshMonitor"
+       :category "im.received"
+       :urgency 'normal))))
 
 ;;;; Cleanup
 

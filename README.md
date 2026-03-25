@@ -176,8 +176,7 @@ Key options:
 - `meshmonitor-chat-poll-interval` (default `10`): seconds between polling for new messages.
 - `meshmonitor-chat-message-limit` (default `50`): number of messages to fetch per request.
 - `meshmonitor-chat-timestamp-format` (default `"%H:%M"`): format for message timestamps.
-- `meshmonitor-chat-notify` (default `t`): enable desktop notifications for new messages.
-- `meshmonitor-chat-notify-command` (default `"notify-send"`): command for desktop notifications.
+- `meshmonitor-chat-notify` (default `t`): enable desktop notifications for new messages (via D-Bus).
 
 Username/password authentication is also supported via `meshmonitor-chat-username` and `meshmonitor-chat-password` if no token is provided.
 
