@@ -17,8 +17,9 @@
 ;; Configure `meshmonitor-chat-host', `meshmonitor-chat-port' and
 ;; `meshmonitor-chat-token' in your init file.  Then:
 ;;
-;;   M-x meshmonitor-chat-channels       - list channels
-;;   M-x meshmonitor-chat-nodes          - list nodes by hops
+;;   M-x meshmonitor-chat-channels        - list channels
+;;   M-x meshmonitor-chat-nodes           - list nodes by hops
+;;   M-x meshmonitor-chat-unread          - nodes with unread DMs
 ;;   M-x meshmonitor-chat-direct-messages - list DM conversations
 
 ;;; Code:
@@ -137,6 +138,9 @@ When set, username/password login is skipped."
 
 (defvar meshmonitor-chat--chat-buffers nil
   "Alist of ((TYPE . TARGET) . BUFFER) for open chat buffers.")
+
+(defvar meshmonitor-chat--read-timestamps (make-hash-table :test 'equal)
+  "Hash table mapping node IDs to last-read Unix timestamp.")
 
 (defvar meshmonitor-chat--poll-timer nil
   "Timer for periodic message polling.")
@@ -711,7 +715,14 @@ MESSAGES is a list of message alists from the API."
                             (> unix-ts
                                meshmonitor-chat--last-timestamp))
                     (setq meshmonitor-chat--last-timestamp
-                          unix-ts)))))))))))
+                          unix-ts))))))))
+      ;; Mark conversation as read when buffer is visible.
+      (when (get-buffer-window buffer)
+        (with-current-buffer buffer
+          (let ((key (cons meshmonitor-chat--target-type
+                          meshmonitor-chat--target)))
+            (puthash key (or meshmonitor-chat--last-timestamp 0)
+                     meshmonitor-chat--read-timestamps)))))))
 
 (defun meshmonitor-chat--insert-sent-msg-with-state
     (buffer ts sender text state)
@@ -1117,6 +1128,117 @@ Return alist of (NODE-ID . LAST-MESSAGE-ALIST)."
     (setq tabulated-list-entries entries)
     (tabulated-list-print t)))
 
+;;;; Unread messages mode
+
+(defvar meshmonitor-chat-unread-list-mode-map
+  (let ((map (make-sparse-keymap)))
+    (set-keymap-parent map tabulated-list-mode-map)
+    (define-key map (kbd "RET")
+                #'meshmonitor-chat-unread-list-open)
+    (define-key map (kbd "g")
+                #'meshmonitor-chat-unread-list-refresh)
+    map)
+  "Keymap for `meshmonitor-chat-unread-list-mode'.")
+
+(define-derived-mode meshmonitor-chat-unread-list-mode
+  tabulated-list-mode "MeshUnread"
+  "Major mode for listing nodes with unread messages."
+  :group 'meshmonitor-chat
+  (setq tabulated-list-format
+        [("Unread" 7 meshmonitor-chat--sort-by-unread)
+         ("Name" 25 t)
+         ("Node ID" 14 t)
+         ("Last message" 40 nil)])
+  (setq tabulated-list-padding 2)
+  (setq tabulated-list-sort-key '("Unread" . t))
+  (tabulated-list-init-header))
+
+(defun meshmonitor-chat--sort-by-unread (a b)
+  "Sort entries A and B by unread count numerically."
+  (let ((ua (string-to-number (aref (cadr a) 0)))
+        (ub (string-to-number (aref (cadr b) 0))))
+    (< ua ub)))
+
+(defun meshmonitor-chat-unread-list-open ()
+  "Open DM chat with the node at point."
+  (interactive)
+  (let ((entry (tabulated-list-get-entry)))
+    (when entry
+      (meshmonitor-chat-open-dm (aref entry 2)))))
+
+(defun meshmonitor-chat-unread-list-refresh ()
+  "Refresh the unread messages list from the server."
+  (interactive)
+  (meshmonitor-chat--fetch-unread
+   (lambda (unread)
+     (let ((buf (get-buffer "*MeshMonitor: Unread*")))
+       (when (buffer-live-p buf)
+         (with-current-buffer buf
+           (meshmonitor-chat--populate-unread-list unread)))))))
+
+(defun meshmonitor-chat--fetch-unread (callback)
+  "Fetch messages and find unread conversations.
+Call CALLBACK with alist of (NODE-ID . (COUNT . LAST-MSG))."
+  (meshmonitor-chat--api-messages
+   `((limit . 200))
+   (lambda (result)
+     (let ((unread nil))
+       (when result
+         (let ((msgs (alist-get 'data (cdr result))))
+           (when msgs
+             (let ((by-node (make-hash-table :test 'equal)))
+               ;; Group messages by conversation partner.
+               (dolist (msg msgs)
+                 (let* ((from (alist-get 'fromNodeId msg))
+                        (ts (meshmonitor-chat--parse-timestamp
+                             (alist-get 'timestamp msg)))
+                        (channel (alist-get 'channel msg))
+                        (is-dm (equal channel -1))
+                        (is-self (meshmonitor-chat--is-self-p msg)))
+                   ;; Only count DMs from others.
+                   (when (and is-dm (not is-self) from)
+                     (let* ((read-key (cons 'dm from))
+                            (read-ts (or (gethash read-key
+                                                  meshmonitor-chat--read-timestamps)
+                                         0)))
+                       (when (> ts read-ts)
+                         (let ((entry (gethash from by-node)))
+                           (if entry
+                               (progn
+                                 (cl-incf (car entry))
+                                 (when (> ts
+                                          (meshmonitor-chat--parse-timestamp
+                                           (alist-get 'timestamp
+                                                      (cdr entry))))
+                                   (setcdr entry msg)))
+                             (puthash from (cons 1 msg)
+                                      by-node))))))))
+               ;; Convert to alist.
+               (maphash (lambda (k v)
+                          (push (list k (car v) (cdr v)) unread))
+                        by-node)))))
+       (funcall callback unread)))))
+
+(defun meshmonitor-chat--populate-unread-list (unread)
+  "Populate current buffer with UNREAD conversation data.
+Each element of UNREAD is (NODE-ID COUNT LAST-MSG)."
+  (setq tabulated-list-entries
+        (mapcar
+         (lambda (entry)
+           (let* ((node-id (nth 0 entry))
+                  (count (nth 1 entry))
+                  (msg (nth 2 entry))
+                  (name (meshmonitor-chat--node-name node-id))
+                  (text (or (alist-get 'text msg) "")))
+             (list node-id
+                   (vector (number-to-string count)
+                           name
+                           node-id
+                           (truncate-string-to-width
+                            text 40 nil nil "...")))))
+         unread))
+  (tabulated-list-print t))
+
 ;;;; Open chat buffers
 
 (defun meshmonitor-chat-open-channel (channel-id)
@@ -1233,6 +1355,7 @@ Return alist of (NODE-ID . LAST-MESSAGE-ALIST)."
         meshmonitor-chat--channels nil
         meshmonitor-chat--chat-buffers nil)
   (clrhash meshmonitor-chat--nodes)
+  (clrhash meshmonitor-chat--read-timestamps)
   (message "MeshMonitor: disconnected"))
 
 ;;;; Entry points
@@ -1284,6 +1407,22 @@ Return alist of (NODE-ID . LAST-MESSAGE-ALIST)."
        (when (buffer-live-p buf)
          (with-current-buffer buf
            (meshmonitor-chat--populate-node-list)))))))
+
+;;;###autoload
+(defun meshmonitor-chat-unread ()
+  "Show nodes with unread direct messages."
+  (interactive)
+  (meshmonitor-chat--ensure-connected)
+  (let ((buf (get-buffer-create "*MeshMonitor: Unread*")))
+    (with-current-buffer buf
+      (unless (eq major-mode 'meshmonitor-chat-unread-list-mode)
+        (meshmonitor-chat-unread-list-mode)))
+    (switch-to-buffer buf)
+    (meshmonitor-chat--fetch-unread
+     (lambda (unread)
+       (when (buffer-live-p buf)
+         (with-current-buffer buf
+           (meshmonitor-chat--populate-unread-list unread)))))))
 
 (provide 'meshmonitor-chat)
 ;;; meshmonitor-chat.el ends here

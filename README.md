@@ -66,6 +66,7 @@ Connects directly to the [MeshMonitor REST API](https://meshmonitor.org/) using 
 
 - **Channel list**: browse available Meshtastic channels in a tabulated buffer.
 - **Node list**: browse all mesh nodes sorted by hop count, with last-heard time.
+- **Unread messages**: list nodes with unread direct messages, with count and preview.
 - **Direct messages**: list active DM conversations with other nodes.
 - **Chat buffers**: read and send messages with an ERC-like prompt interface.
 - **Delivery confirmation**: sent messages display `·` (pending), `✓` (confirmed) or `✗` (failed).
@@ -144,6 +145,7 @@ Then add to your init file:
 2. Run one of the available commands:
    - `M-x meshmonitor-chat-channels` to browse channels.
    - `M-x meshmonitor-chat-nodes` to list all nodes sorted by hops.
+   - `M-x meshmonitor-chat-unread` to see nodes with unread DMs.
    - `M-x meshmonitor-chat-direct-messages` to list DM conversations.
 3. Press `RET` on a channel or node to open the chat buffer.
 4. Type your message and press `RET` to send.
