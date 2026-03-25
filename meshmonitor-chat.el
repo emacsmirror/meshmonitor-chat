@@ -767,7 +767,8 @@ TS is the timestamp, SENDER the name, TEXT the content."
              (propertize (format "<%s> " sender)
                          'face 'meshmonitor-chat-nick-self-face)
              text " ")
-            'read-only t 'rear-nonsticky t 'front-sticky t))
+            'read-only t 'rear-nonsticky t 'front-sticky t
+            'meshmonitor-chat-msg-text text))
           (insert (meshmonitor-chat--delivery-icon state))
           (insert (propertize "\n" 'read-only t 'rear-nonsticky t))
           (set-marker-insertion-type
@@ -869,9 +870,20 @@ TS is the timestamp, SENDER the name, TEXT the content."
                         meshmonitor-chat--input-ring-index)))))
 
 (defun meshmonitor-chat-resend ()
-  "Resend the message at point."
+  "Resend the message at point.
+Searches the current line for a sent message to resend."
   (interactive)
-  (let ((text (get-text-property (point) 'meshmonitor-chat-msg-text)))
+  (let ((text nil)
+        (start (line-beginning-position))
+        (end (line-end-position)))
+    (save-excursion
+      (goto-char start)
+      (while (and (not text) (< (point) end))
+        (setq text (get-text-property (point)
+                                      'meshmonitor-chat-msg-text))
+        (goto-char (or (next-single-property-change
+                        (point) 'meshmonitor-chat-msg-text nil end)
+                       end))))
     (if text
         (progn
           (goto-char meshmonitor-chat--prompt-end)
