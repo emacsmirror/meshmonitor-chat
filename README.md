@@ -106,6 +106,7 @@ Connects directly to the [MeshMonitor REST API](https://meshmonitor.org/) using 
 | `M-p`     | Previous input from history  |
 | `M-n`     | Next input from history      |
 | `C-c C-r` | Reply to message at point    |
+| `C-c C-s` | Resend message at point      |
 | `C-c C-e` | React with emoji at point    |
 | `C-c C-k` | Cancel reply                 |
 

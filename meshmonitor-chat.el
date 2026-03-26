@@ -493,6 +493,7 @@ Call CALLBACK with (STATUS . BODY)."
     (define-key map (kbd "M-p") #'meshmonitor-chat-previous-input)
     (define-key map (kbd "M-n") #'meshmonitor-chat-next-input)
     (define-key map (kbd "C-c C-r") #'meshmonitor-chat-reply)
+    (define-key map (kbd "C-c C-s") #'meshmonitor-chat-resend)
     (define-key map (kbd "C-c C-e") #'meshmonitor-chat-react)
     (define-key map (kbd "C-c C-k") #'meshmonitor-chat-cancel-reply)
     map)
