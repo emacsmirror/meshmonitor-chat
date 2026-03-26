@@ -717,12 +717,18 @@ TEXT is the message, REQUEST-ID is used for delivery tracking."
   "Render MESSAGES into BUFFER with deduplication.
 MESSAGES is a list of message alists from the API."
   (when (and (buffer-live-p buffer) messages)
-    (let ((sorted (sort (copy-sequence messages)
-                        (lambda (a b)
-                          (< (meshmonitor-chat--parse-timestamp
-                              (alist-get 'timestamp a))
-                             (meshmonitor-chat--parse-timestamp
-                              (alist-get 'timestamp b)))))))
+    ;; Filter to text messages only (portnum 1), skip traceroutes etc.
+    (let* ((text-msgs (seq-filter
+                       (lambda (m)
+                         (let ((pn (alist-get 'portnum m)))
+                           (or (null pn) (equal pn 1))))
+                       messages))
+           (sorted (sort (copy-sequence text-msgs)
+                         (lambda (a b)
+                           (< (meshmonitor-chat--parse-timestamp
+                               (alist-get 'timestamp a))
+                              (meshmonitor-chat--parse-timestamp
+                               (alist-get 'timestamp b)))))))
       (dolist (msg sorted)
         (let ((id (alist-get 'id msg)))
           (unless (and id (with-current-buffer buffer
@@ -1119,7 +1125,8 @@ Each element is (NODE-ID . LAST-MESSAGE-ALIST)."
          (let* ((msgs (alist-get 'data (cdr result)))
                 (dm-msgs (seq-filter
                           (lambda (m)
-                            (equal (alist-get 'channel m) -1))
+                            (and (equal (alist-get 'channel m) -1)
+                                 (equal (alist-get 'portnum m) 1)))
                           msgs)))
            (setq partners
                  (meshmonitor-chat--extract-dm-partners
@@ -1322,9 +1329,11 @@ Call CALLBACK with alist of (NODE-ID . (COUNT . LAST-MSG))."
                         (ts (meshmonitor-chat--parse-timestamp
                              (alist-get 'timestamp msg)))
                         (channel (alist-get 'channel msg))
-                        (is-dm (equal channel -1))
+                        (portnum (alist-get 'portnum msg))
+                        (is-dm (and (equal channel -1)
+                                    (equal portnum 1)))
                         (is-self (meshmonitor-chat--is-self-p msg)))
-                   ;; Only count DMs from others.
+                   ;; Only count text DMs from others.
                    (when (and is-dm (not is-self) from)
                      (let* ((read-key (cons 'dm from))
                             (read-ts (or (gethash read-key
