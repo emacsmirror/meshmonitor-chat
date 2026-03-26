@@ -179,6 +179,9 @@ When set, username/password login is skipped."
 (defvar-local meshmonitor-chat--pending-deliveries nil
   "Alist of (REQUEST-ID . MARKER) for pending delivery icons.")
 
+(defvar-local meshmonitor-chat--reply-to nil
+  "Cons of (REQUEST-ID . SENDER-NAME) for the message being replied to.")
+
 ;;;; Timestamp helpers
 
 (defun meshmonitor-chat--parse-timestamp (ts)
@@ -417,12 +420,15 @@ Call CALLBACK with (STATUS . BODY)."
     (meshmonitor-chat--request
      "GET" (concat "/api/v1/messages?" query) nil callback)))
 
-(defun meshmonitor-chat--api-send (text &optional channel to-node callback)
+(defun meshmonitor-chat--api-send (text &optional channel to-node
+                                             reply-id callback)
   "Send TEXT message to CHANNEL or TO-NODE.
+REPLY-ID is the requestId of the message being replied to.
 Call CALLBACK with (STATUS . BODY)."
   (let ((data `((text . ,text))))
     (when channel (push `(channel . ,channel) data))
     (when to-node (push `(toNodeId . ,to-node) data))
+    (when reply-id (push `(replyId . ,reply-id) data))
     (meshmonitor-chat--request
      "POST" "/api/v1/messages" data callback)))
 
@@ -487,6 +493,9 @@ Call CALLBACK with (STATUS . BODY)."
     (define-key map (kbd "M-p") #'meshmonitor-chat-previous-input)
     (define-key map (kbd "M-n") #'meshmonitor-chat-next-input)
     (define-key map (kbd "C-c C-r") #'meshmonitor-chat-resend)
+    (define-key map (kbd "C-c C-p") #'meshmonitor-chat-reply)
+    (define-key map (kbd "C-c C-e") #'meshmonitor-chat-react)
+    (define-key map (kbd "C-c C-k") #'meshmonitor-chat-cancel-reply)
     map)
   "Keymap for `meshmonitor-chat-mode'.")
 
@@ -544,14 +553,18 @@ Provides an input prompt at the bottom with message history above."
 
 (defun meshmonitor-chat--prompt-string ()
   "Return the prompt string for the current buffer."
-  (pcase meshmonitor-chat--target-type
-    ('channel (format "#%s> "
-                      (meshmonitor-chat--channel-name
-                       meshmonitor-chat--target)))
-    ('dm (format "%s> "
-                 (meshmonitor-chat--node-name
-                  meshmonitor-chat--target)))
-    (_ "MeshMonitor> ")))
+  (let ((base (pcase meshmonitor-chat--target-type
+                ('channel (format "#%s> "
+                                  (meshmonitor-chat--channel-name
+                                   meshmonitor-chat--target)))
+                ('dm (format "%s> "
+                             (meshmonitor-chat--node-name
+                              meshmonitor-chat--target)))
+                (_ "MeshMonitor> "))))
+    (if meshmonitor-chat--reply-to
+        (format "[reply %s] %s"
+                (cdr meshmonitor-chat--reply-to) base)
+      base)))
 
 (defun meshmonitor-chat--setup-prompt ()
   "Insert the input prompt at the end of the current buffer."
@@ -566,14 +579,33 @@ Provides an input prompt at the bottom with message history above."
     (set-marker meshmonitor-chat--prompt-start start)
     (set-marker meshmonitor-chat--prompt-end (point))))
 
+(defun meshmonitor-chat--refresh-prompt ()
+  "Refresh the prompt text, preserving input."
+  (let ((inhibit-read-only t)
+        (input (buffer-substring-no-properties
+                meshmonitor-chat--prompt-end (point-max))))
+    (save-excursion
+      (delete-region meshmonitor-chat--prompt-start (point-max))
+      (goto-char meshmonitor-chat--prompt-start)
+      (let ((txt (meshmonitor-chat--prompt-string)))
+        (insert (propertize txt
+                            'face 'meshmonitor-chat-prompt-face
+                            'read-only t
+                            'front-sticky t
+                            'rear-nonsticky t))
+        (set-marker meshmonitor-chat--prompt-end (point)))
+      (insert input))))
+
 ;;;; Message rendering
 
 (defun meshmonitor-chat--insert-msg (buffer ts sender text
-                                            &optional selfp sysp)
+                                            &optional selfp sysp
+                                            request-id)
   "Insert a chat message into BUFFER.
 TS is the timestamp, SENDER the display name, TEXT the content.
 SELFP non-nil marks the message as from the local node.
-SYSP non-nil renders a system notification instead."
+SYSP non-nil renders a system notification instead.
+REQUEST-ID is stored as text property for reply support."
   (when (buffer-live-p buffer)
     (with-current-buffer buffer
       (let ((inhibit-read-only t)
@@ -604,7 +636,10 @@ SYSP non-nil renders a system notification instead."
             'read-only t
             'rear-nonsticky t
             'front-sticky t
-            'face (when sysp 'meshmonitor-chat-system-face)))
+            'face (when sysp 'meshmonitor-chat-system-face)
+            'meshmonitor-chat-msg-text text
+            'meshmonitor-chat-request-id request-id
+            'meshmonitor-chat-sender sender))
           (set-marker-insertion-type
            meshmonitor-chat--prompt-start nil)
           (set-marker-insertion-type
@@ -701,6 +736,7 @@ MESSAGES is a list of message alists from the API."
                    (ts (alist-get 'timestamp msg))
                    (selfp (meshmonitor-chat--is-self-p msg))
                    (unix-ts (meshmonitor-chat--parse-timestamp ts))
+                   (req-id (alist-get 'requestId msg))
                    (delivery (when selfp
                                (meshmonitor-chat--msg-delivery-state
                                 msg))))
@@ -713,7 +749,7 @@ MESSAGES is a list of message alists from the API."
                     (meshmonitor-chat--insert-sent-msg-with-state
                      buffer ts sender text delivery)
                   (meshmonitor-chat--insert-msg
-                   buffer ts sender text selfp)
+                   buffer ts sender text selfp nil req-id)
                   ;; Notify for messages from others when not visible.
                   (unless (or selfp (get-buffer-window buffer))
                     (with-current-buffer buffer
@@ -798,7 +834,12 @@ TS is the timestamp, SENDER the name, TEXT the content."
     (user-error "Not connected to MeshMonitor"))
   (let ((buf (current-buffer))
         (target meshmonitor-chat--target)
-        (ttype meshmonitor-chat--target-type))
+        (ttype meshmonitor-chat--target-type)
+        (reply-id (car meshmonitor-chat--reply-to)))
+    ;; Clear reply context after capturing it.
+    (when meshmonitor-chat--reply-to
+      (setq meshmonitor-chat--reply-to nil)
+      (meshmonitor-chat--refresh-prompt))
     (let ((cb (lambda (result)
                 (let ((status (if result (car result) 0))
                       (data (alist-get 'data (cdr result))))
@@ -837,9 +878,11 @@ TS is the timestamp, SENDER the name, TEXT the content."
                      nil t)))))))
       (pcase ttype
         ('channel
-         (meshmonitor-chat--api-send text target nil cb))
+         (meshmonitor-chat--api-send text target nil
+                                     reply-id cb))
         ('dm
-         (meshmonitor-chat--api-send text nil target cb))
+         (meshmonitor-chat--api-send text nil target
+                                     reply-id cb))
         (_ (user-error "No target set for this buffer"))))))
 
 (defun meshmonitor-chat-previous-input ()
@@ -886,6 +929,56 @@ Searches the current line for a sent message to resend."
           (goto-char meshmonitor-chat--prompt-end)
           (meshmonitor-chat--send-text text))
       (user-error "No sent message at point"))))
+
+(defun meshmonitor-chat--get-msg-property-at-line (prop)
+  "Get text property PROP from the current line."
+  (let ((value nil)
+        (start (line-beginning-position))
+        (end (line-end-position)))
+    (save-excursion
+      (goto-char start)
+      (while (and (not value) (< (point) end))
+        (setq value (get-text-property (point) prop))
+        (goto-char (or (next-single-property-change
+                        (point) prop nil end)
+                       end))))
+    value))
+
+(defun meshmonitor-chat-reply ()
+  "Set reply context to the message at point.
+The next sent message will be a reply to this one."
+  (interactive)
+  (let ((req-id (meshmonitor-chat--get-msg-property-at-line
+                 'meshmonitor-chat-request-id))
+        (sender (meshmonitor-chat--get-msg-property-at-line
+                 'meshmonitor-chat-sender)))
+    (if req-id
+        (progn
+          (setq meshmonitor-chat--reply-to (cons req-id sender))
+          (meshmonitor-chat--refresh-prompt)
+          (goto-char (point-max))
+          (message "Replying to %s (C-c C-k to cancel)" sender))
+      (user-error "No message at point"))))
+
+(defun meshmonitor-chat-cancel-reply ()
+  "Cancel the current reply context."
+  (interactive)
+  (setq meshmonitor-chat--reply-to nil)
+  (meshmonitor-chat--refresh-prompt)
+  (message "Reply cancelled"))
+
+(defun meshmonitor-chat-react ()
+  "React with an emoji to the message at point."
+  (interactive)
+  (let ((req-id (meshmonitor-chat--get-msg-property-at-line
+                 'meshmonitor-chat-request-id)))
+    (if req-id
+        (let ((emoji (read-string "Emoji: ")))
+          (when (not (string-empty-p emoji))
+            (let ((meshmonitor-chat--reply-to
+                   (cons req-id "react")))
+              (meshmonitor-chat--send-text emoji))))
+      (user-error "No message at point"))))
 
 ;;;; Buffer management
 

@@ -79,6 +79,8 @@ Connects directly to the [MeshMonitor REST API](https://meshmonitor.org/) using 
 - **Chat buffers**: read and send messages with an ERC-like prompt interface.
 - **Delivery confirmation**: sent messages display `·` (pending), `✓` (confirmed) or `✗` (failed).
 - **Resend**: place cursor on a failed message and press `C-c C-r` to resend.
+- **Reply**: press `C-c C-p` on a message to reply to it, the prompt shows the reply context.
+- **Emoji reactions**: press `C-c C-e` on a message to react with an emoji.
 - **Desktop notifications**: get notified when new messages arrive in background buffers.
 - **Polling**: automatic periodic fetch of new messages in open chat buffers.
 - **Input size indicator**: mode-line shows byte count with warnings for large messages (LoRa limit ~200 bytes per part, max 3 parts).
@@ -104,6 +106,9 @@ Connects directly to the [MeshMonitor REST API](https://meshmonitor.org/) using 
 | `M-p`     | Previous input from history  |
 | `M-n`     | Next input from history      |
 | `C-c C-r` | Resend message at point      |
+| `C-c C-p` | Reply to message at point    |
+| `C-c C-e` | React with emoji at point    |
+| `C-c C-k` | Cancel reply                 |
 
 ## Installation
 
