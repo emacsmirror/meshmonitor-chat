@@ -1466,17 +1466,32 @@ Each element of UNREAD is (NODE-ID COUNT LAST-MSG)."
                       (meshmonitor-chat--render-messages
                        buf msgs))))))))
           ('dm
-           (let ((params `((fromNodeId . ,target) (limit . 20))))
-             (when since
-               (push `(since . ,(1+ since)) params))
-             (meshmonitor-chat--api-messages
-              params
-              (lambda (result)
-                (when result
-                  (let ((msgs (alist-get 'data (cdr result))))
-                    (when msgs
-                      (meshmonitor-chat--render-messages
-                       buf msgs)))))))))))))
+           ;; Fetch both directions for DMs.
+           (let ((all-msgs nil)
+                 (dm-pending 2))
+             (let ((dm-handler
+                    (lambda (result)
+                      (when result
+                        (let ((msgs (alist-get 'data (cdr result))))
+                          (when msgs
+                            (setq all-msgs
+                                  (append msgs all-msgs)))))
+                      (setq dm-pending (1- dm-pending))
+                      (when (zerop dm-pending)
+                        (when all-msgs
+                          (meshmonitor-chat--render-messages
+                           buf all-msgs))))))
+               (let ((params-from
+                      `((fromNodeId . ,target) (limit . 20)))
+                     (params-to
+                      `((toNodeId . ,target) (limit . 20))))
+                 (when since
+                   (push `(since . ,(1+ since)) params-from)
+                   (push `(since . ,(1+ since)) params-to))
+                 (meshmonitor-chat--api-messages
+                  params-from dm-handler)
+                 (meshmonitor-chat--api-messages
+                  params-to dm-handler))))))))))
 
 ;;;; Notifications
 
