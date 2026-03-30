@@ -109,6 +109,7 @@ Connects directly to the [MeshMonitor REST API](https://meshmonitor.org/) using 
 | `C-c C-s` | Resend message at point      |
 | `C-c C-e` | React with emoji at point    |
 | `C-c C-k` | Cancel reply                 |
+| `C-c C-d` | Open DM with sender at point |
 
 ## Installation
 

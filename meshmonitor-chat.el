@@ -496,6 +496,7 @@ Call CALLBACK with (STATUS . BODY)."
     (define-key map (kbd "C-c C-s") #'meshmonitor-chat-resend)
     (define-key map (kbd "C-c C-e") #'meshmonitor-chat-react)
     (define-key map (kbd "C-c C-k") #'meshmonitor-chat-cancel-reply)
+    (define-key map (kbd "C-c C-d") #'meshmonitor-chat-dm-at-point)
     map)
   "Keymap for `meshmonitor-chat-mode'.")
 
@@ -600,12 +601,13 @@ Provides an input prompt at the bottom with message history above."
 
 (defun meshmonitor-chat--insert-msg (buffer ts sender text
                                             &optional selfp sysp
-                                            request-id)
+                                            request-id from-id)
   "Insert a chat message into BUFFER.
 TS is the timestamp, SENDER the display name, TEXT the content.
 SELFP non-nil marks the message as from the local node.
 SYSP non-nil renders a system notification instead.
-REQUEST-ID is stored as text property for reply support."
+REQUEST-ID is stored as text property for reply support.
+FROM-ID is the sender node ID for opening DMs."
   (when (buffer-live-p buffer)
     (with-current-buffer buffer
       (let ((inhibit-read-only t)
@@ -639,7 +641,8 @@ REQUEST-ID is stored as text property for reply support."
             'face (when sysp 'meshmonitor-chat-system-face)
             'meshmonitor-chat-msg-text text
             'meshmonitor-chat-request-id request-id
-            'meshmonitor-chat-sender sender))
+            'meshmonitor-chat-sender sender
+            'meshmonitor-chat-from-id from-id))
           (set-marker-insertion-type
            meshmonitor-chat--prompt-start nil)
           (set-marker-insertion-type
@@ -764,7 +767,7 @@ MESSAGES is a list of message alists from the API."
                     (meshmonitor-chat--insert-sent-msg-with-state
                      buffer ts sender text delivery)
                   (meshmonitor-chat--insert-msg
-                   buffer ts sender text selfp nil req-id)
+                   buffer ts sender text selfp nil req-id from)
                   ;; Notify for messages from others when not visible.
                   (unless (or selfp (get-buffer-window buffer))
                     (with-current-buffer buffer
@@ -993,6 +996,15 @@ The next sent message will be a reply to this one."
             (let ((meshmonitor-chat--reply-to
                    (cons req-id "react")))
               (meshmonitor-chat--send-text emoji))))
+      (user-error "No message at point"))))
+
+(defun meshmonitor-chat-dm-at-point ()
+  "Open a DM chat with the sender of the message at point."
+  (interactive)
+  (let ((from-id (meshmonitor-chat--get-msg-property-at-line
+                  'meshmonitor-chat-from-id)))
+    (if from-id
+        (meshmonitor-chat-open-dm from-id)
       (user-error "No message at point"))))
 
 ;;;; Buffer management
