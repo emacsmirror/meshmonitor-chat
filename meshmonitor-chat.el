@@ -865,10 +865,24 @@ TS is the timestamp, SENDER the name, TEXT the content."
                    ;; 201: sent directly.
                    ((and result (< status 400))
                     (let ((req-id (alist-get 'requestId data))
+                          (msg-id (alist-get 'messageId data))
                           (parts (or (alist-get 'messageCount data)
                                      1)))
-                      (meshmonitor-chat--insert-sent-msg
-                       buf text req-id)
+                      ;; Only echo if polling hasn't rendered it already.
+                      (when (buffer-live-p buf)
+                        (let ((already-seen
+                               (and msg-id
+                                    (with-current-buffer buf
+                                      (gethash msg-id
+                                               meshmonitor-chat--seen-ids)))))
+                          (unless already-seen
+                            (meshmonitor-chat--insert-sent-msg
+                             buf text req-id))
+                          ;; Mark as seen to prevent future duplicates.
+                          (when msg-id
+                            (with-current-buffer buf
+                              (puthash msg-id t
+                                       meshmonitor-chat--seen-ids)))))
                       ;; Inform if message was split (202).
                       (when (> parts 1)
                         (meshmonitor-chat--insert-msg
