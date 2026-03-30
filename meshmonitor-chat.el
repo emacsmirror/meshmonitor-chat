@@ -548,7 +548,7 @@ Provides an input prompt at the bottom with message history above."
       conn)))
 
 (defun meshmonitor-chat--update-mode-line ()
-  "Force mode-line update when input changes."
+  "Force mode-line update."
   (force-mode-line-update))
 
 (defun meshmonitor-chat--prompt-string ()
