@@ -2,8 +2,8 @@
 
 ;; Copyright (C) 2026  Andros Fenollosa
 
-;; Author: Andros Fenollosa <andros@fenollosa.email>
-;; Maintainer: Andros Fenollosa <andros@fenollosa.email>
+;; Author: Andros Fenollosa <hi@andros.dev>
+;; Maintainer: Andros Fenollosa <hi@andros.dev>
 ;; Version: 1.0.0
 ;; Package-Requires: ((emacs "28.1"))
 ;; Keywords: comm
