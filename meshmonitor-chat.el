@@ -713,6 +713,15 @@ TEXT is the message, REQUEST-ID is used for delivery tracking."
        (t nil))))
    (t nil)))
 
+(defun meshmonitor-chat--extract-request-id (msg)
+  "Extract the request ID from MSG for reply support.
+Use the requestId field if present, otherwise extract from
+the id field (format nodeNum_requestId)."
+  (or (alist-get 'requestId msg)
+      (let ((id (alist-get 'id msg)))
+        (when (and id (stringp id) (string-match "_\\([0-9]+\\)$" id))
+          (string-to-number (match-string 1 id))))))
+
 (defun meshmonitor-chat--render-messages (buffer messages)
   "Render MESSAGES into BUFFER with deduplication.
 MESSAGES is a list of message alists from the API."
@@ -742,7 +751,7 @@ MESSAGES is a list of message alists from the API."
                    (ts (alist-get 'timestamp msg))
                    (selfp (meshmonitor-chat--is-self-p msg))
                    (unix-ts (meshmonitor-chat--parse-timestamp ts))
-                   (req-id (alist-get 'requestId msg))
+                   (req-id (meshmonitor-chat--extract-request-id msg))
                    (delivery (when selfp
                                (meshmonitor-chat--msg-delivery-state
                                 msg))))
