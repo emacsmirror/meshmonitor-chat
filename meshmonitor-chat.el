@@ -985,14 +985,19 @@ The next sent message will be a reply to this one."
   (meshmonitor-chat--refresh-prompt)
   (message "Reply cancelled"))
 
+(declare-function emojify-completing-read "emojify" (&optional prompt))
+
 (defun meshmonitor-chat-react ()
-  "React with an emoji to the message at point."
+  "React with an emoji to the message at point.
+Uses `emojify-completing-read' when available for emoji selection."
   (interactive)
   (let ((req-id (meshmonitor-chat--get-msg-property-at-line
                  'meshmonitor-chat-request-id)))
     (if req-id
-        (let ((emoji (read-string "Emoji: ")))
-          (when (not (string-empty-p emoji))
+        (let ((emoji (if (fboundp 'emojify-completing-read)
+                         (emojify-completing-read "Reaction: ")
+                       (read-string "Emoji: "))))
+          (when (and emoji (not (string-empty-p emoji)))
             (let ((meshmonitor-chat--reply-to
                    (cons req-id "react")))
               (meshmonitor-chat--send-text emoji))))
