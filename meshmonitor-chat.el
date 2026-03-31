@@ -182,6 +182,9 @@ When set, username/password login is skipped."
 (defvar-local meshmonitor-chat--reply-to nil
   "Cons of (REQUEST-ID . SENDER-NAME) for the message being replied to.")
 
+(defvar-local meshmonitor-chat--reactions nil
+  "Hash table mapping requestId to list of (EMOJI . SENDER) pairs.")
+
 ;;;; Timestamp helpers
 
 (defun meshmonitor-chat--parse-timestamp (ts)
@@ -510,6 +513,8 @@ Provides an input prompt at the bottom with message history above."
   (setq-local meshmonitor-chat--seen-ids
               (make-hash-table :test 'equal))
   (setq-local meshmonitor-chat--pending-deliveries nil)
+  (setq-local meshmonitor-chat--reactions
+              (make-hash-table :test 'equal))
   (setq-local meshmonitor-chat--last-timestamp nil)
   (setq mode-line-process
         '(" " (:eval (meshmonitor-chat--mode-line-status))))
@@ -719,18 +724,92 @@ the id field (format nodeNum_requestId)."
   (let ((pn (alist-get 'portnum msg)))
     (or (null pn) (equal pn 1))))
 
+(defun meshmonitor-chat--reaction-p (msg)
+  "Return non-nil if MSG is an emoji reaction."
+  (equal (alist-get 'emoji msg) 1))
+
+(defun meshmonitor-chat--find-request-id-pos (request-id)
+  "Find buffer position of message with REQUEST-ID, or nil."
+  (save-excursion
+    (goto-char (point-min))
+    (let ((limit (marker-position meshmonitor-chat--prompt-start))
+          (found nil))
+      (while (and (not found) (< (point) limit))
+        (if (equal (get-text-property (point)
+                                      'meshmonitor-chat-request-id)
+                   request-id)
+            (setq found (point))
+          (goto-char (or (next-single-property-change
+                          (point) 'meshmonitor-chat-request-id
+                          nil limit)
+                         limit))))
+      found)))
+
+(defun meshmonitor-chat--render-reaction-line (buffer reply-id)
+  "Render or update the reaction display for REPLY-ID in BUFFER."
+  (when (buffer-live-p buffer)
+    (with-current-buffer buffer
+      (let ((reactions (gethash reply-id meshmonitor-chat--reactions))
+            (inhibit-read-only t))
+        (when reactions
+          (let ((msg-pos (meshmonitor-chat--find-request-id-pos
+                          reply-id)))
+            (when msg-pos
+              (save-excursion
+                (goto-char msg-pos)
+                (forward-line 1)
+                ;; Delete existing reaction line if present.
+                (when (and (< (point)
+                              (marker-position
+                               meshmonitor-chat--prompt-start))
+                           (equal (get-text-property
+                                   (point)
+                                   'meshmonitor-chat-reaction-for)
+                                  reply-id))
+                  (delete-region (point)
+                                 (save-excursion
+                                   (forward-line 1) (point))))
+                ;; Insert updated reaction line.
+                (insert
+                 (propertize
+                  (format "  ↳ %s\n"
+                          (mapconcat
+                           (lambda (r)
+                             (format "%s %s" (car r) (cdr r)))
+                           (reverse reactions) ", "))
+                  'face 'meshmonitor-chat-system-face
+                  'read-only t
+                  'rear-nonsticky t
+                  'front-sticky t
+                  'meshmonitor-chat-reaction-for reply-id))))))))))
+
+(defun meshmonitor-chat--mark-seen (buffer id unix-ts)
+  "Mark message ID as seen in BUFFER and update last timestamp to UNIX-TS."
+  (with-current-buffer buffer
+    (when id
+      (puthash id t meshmonitor-chat--seen-ids))
+    (when (or (null meshmonitor-chat--last-timestamp)
+              (> unix-ts meshmonitor-chat--last-timestamp))
+      (setq meshmonitor-chat--last-timestamp unix-ts))))
+
 (defun meshmonitor-chat--render-messages (buffer messages)
   "Render MESSAGES into BUFFER with deduplication.
 MESSAGES is a list of message alists from the API."
   (when (and (buffer-live-p buffer) messages)
-    (let ((sorted (sort (seq-filter #'meshmonitor-chat--text-message-p
-                                    (copy-sequence messages))
-                        (lambda (a b)
-                          (< (meshmonitor-chat--parse-timestamp
-                              (alist-get 'timestamp a))
-                             (meshmonitor-chat--parse-timestamp
-                              (alist-get 'timestamp b)))))))
-      (dolist (msg sorted)
+    (let* ((text-msgs (seq-filter #'meshmonitor-chat--text-message-p
+                                  (copy-sequence messages)))
+           (sorted (sort text-msgs
+                         (lambda (a b)
+                           (< (meshmonitor-chat--parse-timestamp
+                               (alist-get 'timestamp a))
+                              (meshmonitor-chat--parse-timestamp
+                               (alist-get 'timestamp b))))))
+           (regular (seq-remove #'meshmonitor-chat--reaction-p
+                                sorted))
+           (reactions (seq-filter #'meshmonitor-chat--reaction-p
+                                  sorted)))
+      ;; Render regular messages.
+      (dolist (msg regular)
         (let ((id (alist-get 'id msg)))
           (unless (and id (with-current-buffer buffer
                             (gethash id meshmonitor-chat--seen-ids)))
@@ -761,15 +840,31 @@ MESSAGES is a list of message alists from the API."
                        sender text
                        meshmonitor-chat--target-type
                        meshmonitor-chat--target))))
-                (when id
-                  (with-current-buffer buffer
-                    (puthash id t meshmonitor-chat--seen-ids)))
-                (with-current-buffer buffer
-                  (when (or (null meshmonitor-chat--last-timestamp)
-                            (> unix-ts
-                               meshmonitor-chat--last-timestamp))
-                    (setq meshmonitor-chat--last-timestamp
-                          unix-ts))))))))
+                (meshmonitor-chat--mark-seen
+                 buffer id unix-ts))))))
+      ;; Process emoji reactions.
+      (dolist (msg reactions)
+        (let ((id (alist-get 'id msg))
+              (reply-id (alist-get 'replyId msg))
+              (emoji-text (or (alist-get 'text msg) ""))
+              (from (or (alist-get 'fromNodeId msg)
+                        (alist-get 'from msg)))
+              (unix-ts (meshmonitor-chat--parse-timestamp
+                        (alist-get 'timestamp msg))))
+          (unless (and id (with-current-buffer buffer
+                            (gethash id meshmonitor-chat--seen-ids)))
+            (when reply-id
+              (with-current-buffer buffer
+                (let ((existing (gethash reply-id
+                                         meshmonitor-chat--reactions)))
+                  (push (cons emoji-text
+                              (meshmonitor-chat--node-name from))
+                        existing)
+                  (puthash reply-id existing
+                           meshmonitor-chat--reactions)))
+              (meshmonitor-chat--render-reaction-line
+               buffer reply-id))
+            (meshmonitor-chat--mark-seen buffer id unix-ts))))
       ;; Mark conversation as read when buffer is visible.
       (when (get-buffer-window buffer)
         (with-current-buffer buffer
@@ -1100,8 +1195,9 @@ Each element is (NODE-ID . LAST-MESSAGE-ALIST)."
                 (dm-msgs (seq-filter
                           (lambda (m)
                             (and (equal (alist-get 'channel m) -1)
-                                 (meshmonitor-chat--text-message-p
-                                  m)))
+                                 (meshmonitor-chat--text-message-p m)
+                                 (not (meshmonitor-chat--reaction-p
+                                       m))))
                           msgs)))
            (setq partners
                  (meshmonitor-chat--extract-dm-partners
@@ -1305,7 +1401,9 @@ Call CALLBACK with alist of (NODE-ID COUNT LAST-MSG)."
                         (is-dm (and (equal (alist-get 'channel msg)
                                            -1)
                                     (meshmonitor-chat--text-message-p
-                                     msg)))
+                                     msg)
+                                    (not (meshmonitor-chat--reaction-p
+                                          msg))))
                         (is-self (meshmonitor-chat--is-self-p msg)))
                    (when (and is-dm (not is-self) from)
                      (let ((read-ts
