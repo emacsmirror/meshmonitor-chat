@@ -1032,7 +1032,8 @@ The next sent message will be a reply to this one."
 
 (defun meshmonitor-chat-react ()
   "React with an emoji to the message at point.
-Uses `emojify-completing-read' when available for emoji selection."
+Uses `emojify-completing-read' when available for emoji selection.
+Shows the reaction immediately and sends it via the API."
   (interactive)
   (let ((req-id (meshmonitor-chat--get-msg-property-at-line
                  'meshmonitor-chat-request-id)))
@@ -1041,9 +1042,48 @@ Uses `emojify-completing-read' when available for emoji selection."
                          (emojify-completing-read "Reaction: ")
                        (read-string "Emoji: "))))
           (when (and emoji (not (string-empty-p emoji)))
-            (let ((meshmonitor-chat--reply-to
-                   (cons req-id "react")))
-              (meshmonitor-chat--send-text emoji))))
+            (let ((buf (current-buffer))
+                  (target meshmonitor-chat--target)
+                  (ttype meshmonitor-chat--target-type)
+                  (sender (meshmonitor-chat--node-name
+                           (or meshmonitor-chat--my-node-id "me")))
+                  (reaction (cons emoji nil)))
+              ;; Optimistic: show reaction immediately.
+              (setcdr reaction sender)
+              (let ((existing (gethash req-id
+                                       meshmonitor-chat--reactions)))
+                (push reaction existing)
+                (puthash req-id existing
+                         meshmonitor-chat--reactions))
+              (meshmonitor-chat--render-reaction-line buf req-id)
+              ;; Send via API.
+              (meshmonitor-chat--api-send
+               emoji
+               (when (eq ttype 'channel) target)
+               (when (eq ttype 'dm) target)
+               req-id
+               (lambda (result)
+                 (if (and result (< (car result) 400))
+                     ;; Mark as seen to prevent polling duplicate.
+                     (let ((msg-id
+                            (alist-get
+                             'messageId
+                             (alist-get 'data (cdr result)))))
+                       (when (and msg-id (buffer-live-p buf))
+                         (with-current-buffer buf
+                           (puthash msg-id t
+                                    meshmonitor-chat--seen-ids))))
+                   ;; On error, remove the optimistic reaction.
+                   (when (buffer-live-p buf)
+                     (with-current-buffer buf
+                       (let ((rs (gethash req-id
+                                          meshmonitor-chat--reactions)))
+                         (puthash req-id (delete reaction rs)
+                                  meshmonitor-chat--reactions))
+                       (meshmonitor-chat--render-reaction-line
+                        buf req-id))
+                     (meshmonitor-chat--insert-msg
+                      buf nil nil "Reaction failed" nil t))))))))
       (user-error "No message at point"))))
 
 (defun meshmonitor-chat-dm-at-point ()

@@ -56,15 +56,17 @@ Connects directly to the [MeshMonitor REST API](https://meshmonitor.org/) using 
 
 ```
 [08:15] <Hilltop Relay> Good morning mesh!
+  ↳ 👋 Solar Node 7, 👍 BaseStation K9
 [08:20] <BaseStation K9> Morning! Signal is great today
 [08:21] <Solar Node 7> Copy that, 3 hops from here
 [08:45] <Mountain Peak> Anyone near the trailhead?
 [09:02] <Hilltop Relay> I can see 12 nodes from up here
+  ↳ 🔥 Mountain Peak, 👀 River Bridge
 [09:05] <BaseStation K9> Nice coverage, checking in from base
 [09:30] <River Bridge> Just set up a new repeater
 [09:31] <Solar Node 7> Welcome aboard!
+  ↳ 🎉 BaseStation K9
 [09:33] <River Bridge> Thanks, running on solar
-[09:40] <Mountain Peak> Can you relay to the valley?
 [09:41] <BaseStation K9> Testing now ·
 [09:42] <BaseStation K9> Yes, confirmed ✓
 #LongFast> _
@@ -80,7 +82,7 @@ Connects directly to the [MeshMonitor REST API](https://meshmonitor.org/) using 
 - **Delivery confirmation**: sent messages display `·` (pending), `✓` (confirmed) or `✗` (failed).
 - **Resend**: place cursor on a failed message and press `C-c C-r` to resend.
 - **Reply**: press `C-c C-p` on a message to reply to it, the prompt shows the reply context.
-- **Emoji reactions**: press `C-c C-e` on a message to react with an emoji.
+- **Emoji reactions**: press `C-c C-e` on a message to react with an emoji. Reactions from others appear inline below the message.
 - **Desktop notifications**: get notified when new messages arrive in background buffers.
 - **Polling**: automatic periodic fetch of new messages in open chat buffers.
 - **Input size indicator**: mode-line shows byte count with warnings for large messages (LoRa limit ~200 bytes per part, max 3 parts).
