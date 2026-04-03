@@ -124,6 +124,7 @@ Connects directly to the [MeshMonitor REST API](https://meshmonitor.org/) using 
 | Key   | Description                       |
 |-------|-----------------------------------|
 | `RET` | Open channel chat or DM with node |
+| `0-7` | Open channel by number (channels) |
 | `g`   | Refresh list from server          |
 | `q`   | Quit buffer                       |
 

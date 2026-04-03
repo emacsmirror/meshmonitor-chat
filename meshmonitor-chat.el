@@ -1122,6 +1122,12 @@ Shows the reaction immediately and sends it via the API."
 
 ;;;; Channel list mode
 
+(defun meshmonitor-chat-channel-list-open-by-number ()
+  "Open channel by the digit key pressed (0-7)."
+  (interactive)
+  (let ((id (- last-command-event ?0)))
+    (meshmonitor-chat-open-channel id)))
+
 (defvar meshmonitor-chat-channel-list-mode-map
   (let ((map (make-sparse-keymap)))
     (set-keymap-parent map tabulated-list-mode-map)
@@ -1129,6 +1135,9 @@ Shows the reaction immediately and sends it via the API."
                 #'meshmonitor-chat-channel-list-open)
     (define-key map (kbd "g")
                 #'meshmonitor-chat-channel-list-refresh)
+    (dotimes (i 8)
+      (define-key map (kbd (number-to-string i))
+                  #'meshmonitor-chat-channel-list-open-by-number))
     map)
   "Keymap for `meshmonitor-chat-channel-list-mode'.")
 
