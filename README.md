@@ -24,6 +24,33 @@ Connects directly to the [MeshMonitor REST API](https://meshmonitor.org/) using 
 
 ## Buffers
 
+### Welcome screen (`M-x meshmonitor-chat`)
+
+```
+  MeshMonitor Chat
+  ══════════════════════════════════════
+
+  Connection
+  Server:    192.168.1.100:3000
+  Version:   3.12.0
+  Status:    Connected
+  Node:      Hilltop Relay (!a1b2c3d4)
+  Uptime:    3d 7h
+
+  Statistics
+  Nodes:     128
+  Messages:  2450
+  Channels:  3
+
+  ──────────────────────────────────────
+
+  [c] Channels          [n] Nodes
+  [d] Direct Messages   [u] Unread
+  [g] Refresh           [q] Quit
+
+  ──────────────────────────────────────
+```
+
 ### Channel list (`M-x meshmonitor-chat-channels`)
 
 ```
@@ -161,13 +188,10 @@ Then add to your init file:
 ## Usage
 
 1. Configure `meshmonitor-chat-host`, `meshmonitor-chat-port` and `meshmonitor-chat-token` in your init file.
-2. Run one of the available commands:
-   - `M-x meshmonitor-chat-channels` to browse channels.
-   - `M-x meshmonitor-chat-nodes` to list all nodes sorted by hops.
-   - `M-x meshmonitor-chat-unread` to see nodes with unread DMs.
-   - `M-x meshmonitor-chat-direct-messages` to list DM conversations.
-3. Press `RET` on a channel or node to open the chat buffer.
-4. Type your message and press `RET` to send.
+2. Run `M-x meshmonitor-chat` to open the welcome screen with server status and shortcuts.
+3. From there, press `c`, `n`, `d` or `u` to navigate to channels, nodes, DMs or unread.
+4. Press `RET` on a channel or node to open the chat buffer.
+5. Type your message and press `RET` to send.
 
 Connection is established automatically on first use.
 

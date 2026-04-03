@@ -17,6 +17,7 @@
 ;; Configure `meshmonitor-chat-host', `meshmonitor-chat-port' and
 ;; `meshmonitor-chat-token' in your init file.  Then:
 ;;
+;;   M-x meshmonitor-chat                 - welcome screen
 ;;   M-x meshmonitor-chat-channels        - list channels
 ;;   M-x meshmonitor-chat-nodes           - list nodes by hops
 ;;   M-x meshmonitor-chat-unread          - nodes with unread DMs
@@ -314,7 +315,7 @@ Return non-nil on success."
                   meshmonitor-chat--base-url))
     (setq meshmonitor-chat--connected t)
     ;; Fetch status (sync) for our node identity.
-    (let ((info (meshmonitor-chat--request "GET" "/api/status")))
+    (let ((info (meshmonitor-chat--fetch-status-sync)))
       (when info
         (let* ((body (cdr info))
                (conn (alist-get 'connection body))
@@ -1646,6 +1647,158 @@ TEXT is the message content, TARGET-TYPE and TARGET identify the chat."
   (clrhash meshmonitor-chat--read-timestamps)
   (message "MeshMonitor: disconnected"))
 
+;;;; Status API
+
+(defun meshmonitor-chat--fetch-status-sync ()
+  "Fetch server status synchronously, trying v1 API first."
+  (let ((result (meshmonitor-chat--request "GET" "/api/v1/status")))
+    (if (and result (< (car result) 400))
+        result
+      (meshmonitor-chat--request "GET" "/api/status"))))
+
+(defun meshmonitor-chat--fetch-status (callback)
+  "Fetch server status asynchronously, trying v1 API first.
+Call CALLBACK with (STATUS-CODE . BODY)."
+  (meshmonitor-chat--request
+   "GET" "/api/v1/status" nil
+   (lambda (result)
+     (if (and result (< (car result) 400))
+         (funcall callback result)
+       (meshmonitor-chat--request
+        "GET" "/api/status" nil callback)))))
+
+;;;; Welcome buffer
+
+(defface meshmonitor-chat-welcome-title-face
+  '((t :weight bold :height 1.3))
+  "Face for the welcome buffer title.")
+
+(defface meshmonitor-chat-welcome-heading-face
+  '((t :weight bold))
+  "Face for section headings in the welcome buffer.")
+
+(defface meshmonitor-chat-welcome-key-face
+  '((t :foreground "cyan" :weight bold))
+  "Face for keyboard shortcuts in the welcome buffer.")
+
+(defvar meshmonitor-chat-welcome-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "c") #'meshmonitor-chat-channels)
+    (define-key map (kbd "n") #'meshmonitor-chat-nodes)
+    (define-key map (kbd "d") #'meshmonitor-chat-direct-messages)
+    (define-key map (kbd "u") #'meshmonitor-chat-unread)
+    (define-key map (kbd "g") #'meshmonitor-chat-refresh)
+    (define-key map (kbd "q") #'quit-window)
+    map)
+  "Keymap for `meshmonitor-chat-welcome-mode'.")
+
+(define-derived-mode meshmonitor-chat-welcome-mode special-mode
+  "MeshMonitor"
+  "Major mode for the MeshMonitor welcome screen."
+  :group 'meshmonitor-chat
+  (buffer-disable-undo)
+  (setq truncate-lines t))
+
+(defun meshmonitor-chat--format-uptime (seconds)
+  "Format SECONDS as a human-readable uptime string."
+  (let* ((days (floor (/ seconds 86400)))
+         (hours (floor (/ (mod seconds 86400) 3600)))
+         (mins (floor (/ (mod seconds 3600) 60))))
+    (cond
+     ((> days 0) (format "%dd %dh" days hours))
+     ((> hours 0) (format "%dh %dm" hours mins))
+     (t (format "%dm" mins)))))
+
+(defun meshmonitor-chat--insert-welcome-shortcut (key label)
+  "Insert a formatted shortcut KEY with LABEL."
+  (insert "  ")
+  (insert (propertize (format "[%s]" key)
+                      'face 'meshmonitor-chat-welcome-key-face))
+  (insert (format " %-17s" label)))
+
+(defun meshmonitor-chat--render-welcome (status-data)
+  "Render the welcome buffer with STATUS-DATA."
+  (let ((buf (get-buffer-create "*MeshMonitor*"))
+        (body (cdr status-data)))
+    (with-current-buffer buf
+      (let ((inhibit-read-only t))
+        (erase-buffer)
+        (let* ((conn (alist-get 'connection body))
+               (local-node (alist-get 'localNode conn))
+               (stats (alist-get 'statistics body))
+               (version (or (alist-get 'version body) "?"))
+               (connected (alist-get 'connected conn))
+               (uptime (alist-get 'uptime body))
+               (node-name (when local-node
+                            (alist-get 'longName local-node)))
+               (node-id (when local-node
+                          (alist-get 'nodeId local-node)))
+               (sep (propertize (format "  %s\n"
+                                        (make-string 38 ?─))
+                                'face 'meshmonitor-chat-timestamp-face)))
+          ;; Title.
+          (insert "\n")
+          (insert (propertize "  MeshMonitor Chat\n"
+                              'face 'meshmonitor-chat-welcome-title-face))
+          (insert (propertize (format "  %s\n" (make-string 38 ?═))
+                              'face 'meshmonitor-chat-timestamp-face))
+          (insert "\n")
+          ;; Connection.
+          (insert (propertize "  Connection\n"
+                              'face 'meshmonitor-chat-welcome-heading-face))
+          (insert (format "  Server:    %s:%d\n"
+                          meshmonitor-chat-host
+                          meshmonitor-chat-port))
+          (insert (format "  Version:   %s\n" version))
+          (insert (format "  Status:    %s\n"
+                          (propertize
+                           (if connected "Connected" "Disconnected")
+                           'face (if connected
+                                     'meshmonitor-chat-delivery-confirmed-face
+                                   'meshmonitor-chat-delivery-failed-face))))
+          (when node-name
+            (insert (format "  Node:      %s (%s)\n"
+                            node-name node-id)))
+          (when uptime
+            (insert (format "  Uptime:    %s\n"
+                            (meshmonitor-chat--format-uptime uptime))))
+          (insert "\n")
+          ;; Statistics.
+          (when stats
+            (insert (propertize "  Statistics\n"
+                                'face 'meshmonitor-chat-welcome-heading-face))
+            (insert (format "  Nodes:     %s\n"
+                            (or (alist-get 'nodes stats) "?")))
+            (insert (format "  Messages:  %s\n"
+                            (or (alist-get 'messages stats) "?")))
+            (insert (format "  Channels:  %s\n"
+                            (or (alist-get 'channels stats) "?")))
+            (insert "\n"))
+          ;; Separator.
+          (insert sep)
+          (insert "\n")
+          ;; Navigation.
+          (meshmonitor-chat--insert-welcome-shortcut "c" "Channels")
+          (meshmonitor-chat--insert-welcome-shortcut "n" "Nodes")
+          (insert "\n")
+          (meshmonitor-chat--insert-welcome-shortcut "d" "Direct Messages")
+          (meshmonitor-chat--insert-welcome-shortcut "u" "Unread")
+          (insert "\n")
+          (meshmonitor-chat--insert-welcome-shortcut "g" "Refresh")
+          (meshmonitor-chat--insert-welcome-shortcut "q" "Quit")
+          (insert "\n\n")
+          (insert sep)))
+      (meshmonitor-chat-welcome-mode)
+      (goto-char (point-min)))))
+
+(defun meshmonitor-chat-refresh ()
+  "Refresh the MeshMonitor welcome buffer."
+  (interactive)
+  (meshmonitor-chat--fetch-status
+   (lambda (result)
+     (when result
+       (meshmonitor-chat--render-welcome result)))))
+
 ;;;; Entry points
 
 (defun meshmonitor-chat--show-list-buffer (name mode fetch-fn
@@ -1706,6 +1859,17 @@ POPULATE-FN receives the data and populates the buffer."
    'meshmonitor-chat-unread-list-mode
    #'meshmonitor-chat--fetch-unread
    #'meshmonitor-chat--populate-unread-list))
+
+;;;###autoload
+(defun meshmonitor-chat ()
+  "Open the MeshMonitor welcome screen."
+  (interactive)
+  (meshmonitor-chat--ensure-connected)
+  (meshmonitor-chat--fetch-status
+   (lambda (result)
+     (when result
+       (meshmonitor-chat--render-welcome result)
+       (switch-to-buffer "*MeshMonitor*")))))
 
 (provide 'meshmonitor-chat)
 ;;; meshmonitor-chat.el ends here
