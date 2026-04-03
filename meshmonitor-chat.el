@@ -1363,18 +1363,31 @@ Return alist of (NODE-ID . LAST-MESSAGE-ALIST)."
          (t (format "%dd" (truncate days)))))
     "?"))
 
+(defvar meshmonitor-chat--online-threshold 900
+  "Seconds since last heard to consider a node online (default 15 min).")
+
+(defun meshmonitor-chat--node-online-p (last-heard)
+  "Return non-nil if LAST-HEARD timestamp is recent enough."
+  (and last-heard (numberp last-heard) (> last-heard 0)
+       (< (- (float-time) (if (> last-heard 9999999999)
+                               (/ last-heard 1000) last-heard))
+          meshmonitor-chat--online-threshold)))
+
 (defun meshmonitor-chat--populate-node-list ()
   "Populate the current buffer with cached node data."
   (let ((entries nil))
     (maphash
      (lambda (key node)
        (when (string-prefix-p "!" key)
-         (let ((hops (or (alist-get 'hopsAway node) 99))
-               (name (or (alist-get 'longName node) ""))
-               (last-heard (alist-get 'lastHeard node)))
+         (let* ((hops (or (alist-get 'hopsAway node) 99))
+                (name (or (alist-get 'longName node) ""))
+                (last-heard (alist-get 'lastHeard node))
+                (online (meshmonitor-chat--node-online-p
+                         last-heard))
+                (indicator (if online "🟢" "⚫")))
            (push (list key
                        (vector (number-to-string hops)
-                               name
+                               (format "%s %s" indicator name)
                                key
                                (meshmonitor-chat--format-last-heard
                                 last-heard)))
