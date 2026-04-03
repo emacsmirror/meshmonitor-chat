@@ -317,14 +317,12 @@ Return non-nil on success."
     ;; Fetch status (sync) for our node identity.
     (let ((info (meshmonitor-chat--fetch-status-sync)))
       (when info
-        (let* ((body (cdr info))
-               (conn (alist-get 'connection body))
-               (local-node (alist-get 'localNode conn)))
-          (when local-node
-            (setq meshmonitor-chat--my-node-id
-                  (alist-get 'nodeId local-node))
-            (setq meshmonitor-chat--my-node-num
-                  (alist-get 'nodeNum local-node))))))
+        (let ((status (meshmonitor-chat--normalize-status
+                       (cdr info))))
+          (setq meshmonitor-chat--my-node-id
+                (alist-get 'node-id status))
+          (setq meshmonitor-chat--my-node-num
+                (alist-get 'node-num status)))))
     ;; Fetch nodes (sync) for name resolution.
     (meshmonitor-chat--fetch-nodes-sync)
     ;; Fetch channels (sync).
@@ -1650,22 +1648,60 @@ TEXT is the message content, TARGET-TYPE and TARGET identify the chat."
 ;;;; Status API
 
 (defun meshmonitor-chat--fetch-status-sync ()
-  "Fetch server status synchronously, trying v1 API first."
-  (let ((result (meshmonitor-chat--request "GET" "/api/v1/status")))
+  "Fetch server status synchronously.
+Try legacy endpoint first (more data), fall back to v1."
+  (let ((result (meshmonitor-chat--request "GET" "/api/status")))
     (if (and result (< (car result) 400))
         result
-      (meshmonitor-chat--request "GET" "/api/status"))))
+      (meshmonitor-chat--request "GET" "/api/v1/status"))))
 
 (defun meshmonitor-chat--fetch-status (callback)
-  "Fetch server status asynchronously, trying v1 API first.
+  "Fetch server status asynchronously.
+Try legacy endpoint first (more data), fall back to v1.
 Call CALLBACK with (STATUS-CODE . BODY)."
   (meshmonitor-chat--request
-   "GET" "/api/v1/status" nil
+   "GET" "/api/status" nil
    (lambda (result)
      (if (and result (< (car result) 400))
          (funcall callback result)
        (meshmonitor-chat--request
-        "GET" "/api/status" nil callback)))))
+        "GET" "/api/v1/status" nil callback)))))
+
+(defun meshmonitor-chat--json-true-p (value)
+  "Return non-nil if JSON VALUE is true.
+Handles `json-read' representation where false is `:json-false'."
+  (and value (not (eq value :json-false))))
+
+(defun meshmonitor-chat--normalize-status (body)
+  "Normalize status BODY from v1 or legacy API into a common alist.
+Returns alist with keys: connected, node-name, node-id,
+node-num, version, uptime, nodes, messages, channels."
+  (let* ((v1-data (alist-get 'data body))
+         (conn (alist-get 'connection body))
+         (local-node (and conn (alist-get 'localNode conn)))
+         (stats (alist-get 'statistics body)))
+    ;; v1: { success, data: { connected, localNodeId, longName, ... } }
+    ;; Legacy: { version, uptime, connection: { connected, localNode },
+    ;;           statistics: { nodes, messages, channels } }
+    `((connected . ,(meshmonitor-chat--json-true-p
+                     (if v1-data
+                         (alist-get 'connected v1-data)
+                       (and conn (alist-get 'connected conn)))))
+      (node-name . ,(or (and v1-data (alist-get 'longName v1-data))
+                         (and local-node
+                              (alist-get 'longName local-node))))
+      (node-id . ,(or (and v1-data (alist-get 'localNodeId v1-data))
+                       (and local-node
+                            (alist-get 'nodeId local-node))))
+      (node-num . ,(or (and v1-data
+                             (alist-get 'localNodeNum v1-data))
+                        (and local-node
+                             (alist-get 'nodeNum local-node))))
+      (version . ,(alist-get 'version body))
+      (uptime . ,(alist-get 'uptime body))
+      (nodes . ,(and stats (alist-get 'nodes stats)))
+      (messages . ,(and stats (alist-get 'messages stats)))
+      (channels . ,(and stats (alist-get 'channels stats))))))
 
 ;;;; Welcome buffer
 
@@ -1719,20 +1755,16 @@ Call CALLBACK with (STATUS-CODE . BODY)."
 (defun meshmonitor-chat--render-welcome (status-data)
   "Render the welcome buffer with STATUS-DATA."
   (let ((buf (get-buffer-create "*MeshMonitor*"))
-        (body (cdr status-data)))
+        (info (meshmonitor-chat--normalize-status
+               (cdr status-data))))
     (with-current-buffer buf
       (let ((inhibit-read-only t))
         (erase-buffer)
-        (let* ((conn (alist-get 'connection body))
-               (local-node (alist-get 'localNode conn))
-               (stats (alist-get 'statistics body))
-               (version (or (alist-get 'version body) "?"))
-               (connected (alist-get 'connected conn))
-               (uptime (alist-get 'uptime body))
-               (node-name (when local-node
-                            (alist-get 'longName local-node)))
-               (node-id (when local-node
-                          (alist-get 'nodeId local-node)))
+        (let* ((connected (alist-get 'connected info))
+               (version (or (alist-get 'version info) "?"))
+               (uptime (alist-get 'uptime info))
+               (node-name (alist-get 'node-name info))
+               (node-id (alist-get 'node-id info))
                (sep (propertize (format "  %s\n"
                                         (make-string 38 ?─))
                                 'face 'meshmonitor-chat-timestamp-face)))
@@ -1764,16 +1796,19 @@ Call CALLBACK with (STATUS-CODE . BODY)."
                             (meshmonitor-chat--format-uptime uptime))))
           (insert "\n")
           ;; Statistics.
-          (when stats
-            (insert (propertize "  Statistics\n"
-                                'face 'meshmonitor-chat-welcome-heading-face))
-            (insert (format "  Nodes:     %s\n"
-                            (or (alist-get 'nodes stats) "?")))
-            (insert (format "  Messages:  %s\n"
-                            (or (alist-get 'messages stats) "?")))
-            (insert (format "  Channels:  %s\n"
-                            (or (alist-get 'channels stats) "?")))
-            (insert "\n"))
+          (let ((nodes (alist-get 'nodes info))
+                (messages (alist-get 'messages info))
+                (channels (alist-get 'channels info)))
+            (when (or nodes messages channels)
+              (insert (propertize "  Statistics\n"
+                                  'face 'meshmonitor-chat-welcome-heading-face))
+              (when nodes
+                (insert (format "  Nodes:     %s\n" nodes)))
+              (when messages
+                (insert (format "  Messages:  %s\n" messages)))
+              (when channels
+                (insert (format "  Channels:  %s\n" channels)))
+              (insert "\n")))
           ;; Separator.
           (insert sep)
           (insert "\n")
