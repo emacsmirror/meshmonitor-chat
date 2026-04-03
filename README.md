@@ -64,11 +64,11 @@ Connects directly to the [MeshMonitor REST API](https://meshmonitor.org/) using 
 
 ```
   Hops  Name                           Node ID         Last heard
-  1     Hilltop Relay                  !a1b2c3d4       5m
-  1     Solar Node 7                   !d4e5f6a7       12m
-  2     BaseStation K9                 !b8c9d0e1       now
-  3     Mountain Peak                  !f2a3b4c5       1h
-  4     River Bridge                   !e6f7a8b9       3d
+  1     🟢 Hilltop Relay               !a1b2c3d4       5m
+  1     🟢 Solar Node 7                !d4e5f6a7       12m
+  2     🟢 BaseStation K9              !b8c9d0e1       now
+  3     ⚫ Mountain Peak               !f2a3b4c5       1h
+  4     ⚫ River Bridge                !e6f7a8b9       3d
 ```
 
 ### Unread messages (`M-x meshmonitor-chat-unread`)
