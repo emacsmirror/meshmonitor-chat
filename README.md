@@ -148,6 +148,12 @@ Connects directly to the [MeshMonitor REST API](https://meshmonitor.org/) using 
 
 ## Installation
 
+### MELPA
+
+```
+M-x package-install RET meshmonitor-chat RET
+```
+
 ### use-package with :vc (Emacs 29+)
 
 ```elisp
