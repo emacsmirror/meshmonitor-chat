@@ -64,10 +64,10 @@ Connects directly to the [MeshMonitor REST API](https://meshmonitor.org/) using 
 
 ```
   Hops  Name                           Node ID         Last heard
-  1     🟢 Hilltop Relay               !a1b2c3d4       5m
-  1     🟢 Solar Node 7                !d4e5f6a7       12m
+  1     🟢 🔑 Hilltop Relay            !a1b2c3d4       5m
+  1     🟢 🔑 Solar Node 7             !d4e5f6a7       12m
   2     🟢 BaseStation K9              !b8c9d0e1       now
-  3     ⚫ Mountain Peak               !f2a3b4c5       1h
+  3     ⚫ 🔑 Mountain Peak            !f2a3b4c5       1h
   4     ⚫ River Bridge                !e6f7a8b9       3d
 ```
 
@@ -102,7 +102,7 @@ Connects directly to the [MeshMonitor REST API](https://meshmonitor.org/) using 
 ## Features
 
 - **Channel list**: browse available Meshtastic channels in a tabulated buffer.
-- **Node list**: browse all mesh nodes sorted by hop count, with last-heard time.
+- **Node list**: browse all mesh nodes sorted by hop count, with online indicator, key exchange status and last-heard time.
 - **Unread messages**: list nodes with unread direct messages, with count and preview.
 - **Direct messages**: list active DM conversations with other nodes.
 - **Chat buffers**: read and send messages with an ERC-like prompt interface.
@@ -110,6 +110,9 @@ Connects directly to the [MeshMonitor REST API](https://meshmonitor.org/) using 
 - **Resend**: place cursor on a failed message and press `C-c C-r` to resend.
 - **Reply**: press `C-c C-p` on a message to reply to it, the prompt shows the reply context.
 - **Emoji reactions**: press `C-c C-e` on a message to react with an emoji. Reactions from others appear inline below the message.
+- **Traceroute**: press `t` on a node to send a traceroute.
+- **Request position**: press `p` on a node to request its position.
+- **Key exchange check**: DM is blocked for nodes without encryption keys (no PKC).
 - **Desktop notifications**: get notified when new messages arrive in background buffers.
 - **Polling**: automatic periodic fetch of new messages in open chat buffers.
 - **Input size indicator**: mode-line shows byte count with warnings for large messages (LoRa limit ~200 bytes per part, max 3 parts).
@@ -125,6 +128,8 @@ Connects directly to the [MeshMonitor REST API](https://meshmonitor.org/) using 
 |-------|-----------------------------------|
 | `RET` | Open channel chat or DM with node |
 | `0-7` | Open channel by number (channels) |
+| `t`   | Send traceroute to node (nodes)   |
+| `p`   | Request position from node (nodes)|
 | `g`   | Refresh list from server          |
 | `q`   | Quit buffer                       |
 

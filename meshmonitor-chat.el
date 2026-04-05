@@ -145,6 +145,9 @@ When set, username/password login is skipped."
 (defvar meshmonitor-chat--auth-token nil
   "Bearer token for API requests.")
 
+(defvar meshmonitor-chat--csrf-token nil
+  "CSRF token for session-authenticated requests.")
+
 (defvar meshmonitor-chat--connected nil
   "Non-nil when connected to MeshMonitor.")
 
@@ -451,6 +454,125 @@ Call CALLBACK with (STATUS . BODY)."
     (when reply-id (push `(replyId . ,reply-id) data))
     (meshmonitor-chat--request
      "POST" "/api/v1/messages" data callback)))
+
+;;;; Session-authenticated requests (for internal API)
+
+(defun meshmonitor-chat--ensure-session ()
+  "Ensure we have a session cookie and CSRF token.
+Logs in with username/password if needed."
+  (unless meshmonitor-chat--csrf-token
+    (when (and (not (string-empty-p meshmonitor-chat-username))
+               (not (string-empty-p meshmonitor-chat-password)))
+      ;; Login to get session cookie (url.el stores it automatically).
+      (let ((url-cookie-confirmation nil))
+        (meshmonitor-chat--request
+         "POST" meshmonitor-chat-login-endpoint
+         `((username . ,meshmonitor-chat-username)
+           (password . ,meshmonitor-chat-password))))
+      ;; Fetch CSRF token.
+      (let ((result (meshmonitor-chat--request
+                     "GET" "/api/csrf-token")))
+        (when result
+          (let ((token (alist-get 'csrfToken (cdr result))))
+            (when token
+              (setq meshmonitor-chat--csrf-token token))))))))
+
+(defun meshmonitor-chat--session-request (method endpoint
+                                                  &optional data
+                                                  callback)
+  "Make a session-authenticated request with METHOD to ENDPOINT.
+Includes CSRF token for POST requests.
+DATA is an alist for the JSON body.
+CALLBACK works like `meshmonitor-chat--request'."
+  (meshmonitor-chat--ensure-session)
+  (let ((url-request-method method)
+        (url-cookie-confirmation nil)
+        (url-request-extra-headers
+         (append '(("Content-Type" . "application/json")
+                   ("Accept" . "application/json"))
+                 (when meshmonitor-chat--csrf-token
+                   `(("X-CSRF-Token"
+                      . ,meshmonitor-chat--csrf-token)))))
+        (url-request-data
+         (when data
+           (encode-coding-string (json-encode data) 'utf-8)))
+        (full-url (meshmonitor-chat--build-url endpoint)))
+    (if callback
+        (url-retrieve
+         full-url
+         (lambda (status cb)
+           (let ((result nil)
+                 (resp-buf (current-buffer)))
+             (unwind-protect
+                 (progn
+                   (unless (plist-get status :error)
+                     (setq result
+                           (meshmonitor-chat--parse-response)))
+                   (funcall cb result))
+               (when (buffer-live-p resp-buf)
+                 (kill-buffer resp-buf)))))
+         (list callback) t)
+      (let ((buf (url-retrieve-synchronously full-url t nil 15)))
+        (when buf
+          (unwind-protect
+              (with-current-buffer buf
+                (meshmonitor-chat--parse-response))
+            (kill-buffer buf)))))))
+
+;;;; Node actions
+
+(defun meshmonitor-chat--node-has-pkc-p (node-id)
+  "Return non-nil if NODE-ID has exchanged encryption keys."
+  (let* ((node (gethash node-id meshmonitor-chat--nodes)))
+    (and node
+         (meshmonitor-chat--json-true-p
+          (alist-get 'hasPKC node)))))
+
+(defun meshmonitor-chat-traceroute ()
+  "Send a traceroute to the node at point."
+  (interactive)
+  (let ((node-id (meshmonitor-chat--get-node-id-at-point)))
+    (if node-id
+        (progn
+          (message "MeshMonitor: traceroute to %s..."
+                   (meshmonitor-chat--node-name node-id))
+          (meshmonitor-chat--session-request
+           "POST" "/api/traceroute"
+           `((destination . ,node-id))
+           (lambda (result)
+             (if (and result (< (car result) 400))
+                 (message "MeshMonitor: traceroute sent to %s"
+                          (meshmonitor-chat--node-name node-id))
+               (message "MeshMonitor: traceroute failed (HTTP %s)"
+                        (if result (car result) "timeout"))))))
+      (user-error "No node at point"))))
+
+(defun meshmonitor-chat-request-position ()
+  "Request position from the node at point."
+  (interactive)
+  (let ((node-id (meshmonitor-chat--get-node-id-at-point)))
+    (if node-id
+        (progn
+          (message "MeshMonitor: requesting position from %s..."
+                   (meshmonitor-chat--node-name node-id))
+          (meshmonitor-chat--session-request
+           "POST" "/api/position/request"
+           `((destination . ,node-id))
+           (lambda (result)
+             (if (and result (< (car result) 400))
+                 (message "MeshMonitor: position requested from %s"
+                          (meshmonitor-chat--node-name node-id))
+               (message "MeshMonitor: position request failed (HTTP %s)"
+                        (if result (car result) "timeout"))))))
+      (user-error "No node at point"))))
+
+(defun meshmonitor-chat--get-node-id-at-point ()
+  "Get node ID from the current tabulated-list entry."
+  (let ((entry (tabulated-list-get-entry)))
+    (when entry
+      ;; Node ID is in column index 2 for node list, or column 1 for DM/unread.
+      (or (and (> (length entry) 2) (aref entry 2))
+          (and (> (length entry) 1) (aref entry 1))))))
 
 ;;;; Delivery icons
 
@@ -1327,6 +1449,10 @@ Return alist of (NODE-ID . LAST-MESSAGE-ALIST)."
                 #'meshmonitor-chat-node-list-open)
     (define-key map (kbd "g")
                 #'meshmonitor-chat-node-list-refresh)
+    (define-key map (kbd "t")
+                #'meshmonitor-chat-traceroute)
+    (define-key map (kbd "p")
+                #'meshmonitor-chat-request-position)
     map)
   "Keymap for `meshmonitor-chat-node-list-mode'.")
 
@@ -1350,11 +1476,16 @@ Return alist of (NODE-ID . LAST-MESSAGE-ALIST)."
     (< ha hb)))
 
 (defun meshmonitor-chat-node-list-open ()
-  "Open DM chat with the node at point."
+  "Open DM chat with the node at point.
+Refuses if the node has not exchanged encryption keys."
   (interactive)
   (let ((entry (tabulated-list-get-entry)))
     (when entry
-      (meshmonitor-chat-open-dm (aref entry 2)))))
+      (let ((node-id (aref entry 2)))
+        (if (meshmonitor-chat--node-has-pkc-p node-id)
+            (meshmonitor-chat-open-dm node-id)
+          (user-error "Node %s has no key exchange, DM not possible"
+                      (meshmonitor-chat--node-name node-id)))))))
 
 (defun meshmonitor-chat-node-list-refresh ()
   "Refresh the node list from the server."
@@ -1402,7 +1533,10 @@ Return alist of (NODE-ID . LAST-MESSAGE-ALIST)."
                 (last-heard (alist-get 'lastHeard node))
                 (online (meshmonitor-chat--node-online-p
                          last-heard))
-                (indicator (if online "🟢" "⚫")))
+                (pkc (meshmonitor-chat--json-true-p
+                      (alist-get 'hasPKC node)))
+                (indicator (concat (if online "🟢" "⚫")
+                                   (if pkc " 🔑" ""))))
            (push (list key
                        (vector (number-to-string hops)
                                (format "%s %s" indicator name)
@@ -1676,6 +1810,7 @@ TEXT is the message content, TARGET-TYPE and TARGET identify the chat."
   (meshmonitor-chat--stop-polling)
   (setq meshmonitor-chat--connected nil
         meshmonitor-chat--auth-token nil
+        meshmonitor-chat--csrf-token nil
         meshmonitor-chat--base-url nil
         meshmonitor-chat--my-node-id nil
         meshmonitor-chat--my-node-num nil
