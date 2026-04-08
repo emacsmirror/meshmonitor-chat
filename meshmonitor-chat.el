@@ -172,6 +172,9 @@ When set, username/password login is skipped."
 (defvar meshmonitor-chat--poll-timer nil
   "Timer for periodic message polling.")
 
+(defvar meshmonitor-chat--last-poll-time nil
+  "Timestamp of the last successful poll, for gap detection.")
+
 ;;;; Buffer-local variables
 
 (defvar-local meshmonitor-chat--target nil
@@ -638,6 +641,7 @@ CALLBACK works like `meshmonitor-chat--request'."
     (define-key map (kbd "C-c C-e") #'meshmonitor-chat-react)
     (define-key map (kbd "C-c C-k") #'meshmonitor-chat-cancel-reply)
     (define-key map (kbd "C-c C-d") #'meshmonitor-chat-dm-at-point)
+    (define-key map (kbd "C-c C-l") #'meshmonitor-chat-refresh-chat)
     map)
   "Keymap for `meshmonitor-chat-mode'.")
 
@@ -1234,6 +1238,30 @@ Shows the reaction immediately and sends it via the API."
         (meshmonitor-chat-open-dm from-id)
       (user-error "No message at point"))))
 
+(defun meshmonitor-chat-refresh-chat ()
+  "Reload message history for the current chat buffer."
+  (interactive)
+  (unless meshmonitor-chat--target
+    (user-error "Not a chat buffer"))
+  (let ((buf (current-buffer)))
+    (pcase meshmonitor-chat--target-type
+      ('channel
+       (meshmonitor-chat--api-messages
+        `((channel . ,meshmonitor-chat--target)
+          (limit . ,meshmonitor-chat-message-limit))
+        (lambda (result)
+          (when result
+            (let ((msgs (alist-get 'data (cdr result))))
+              (when msgs
+                (meshmonitor-chat--render-messages buf msgs)))))))
+      ('dm
+       (meshmonitor-chat--fetch-dm-both-directions
+        meshmonitor-chat--target meshmonitor-chat-message-limit
+        (lambda (msgs)
+          (when msgs
+            (meshmonitor-chat--render-messages buf msgs))))))
+    (message "MeshMonitor: refreshed")))
+
 ;;;; Buffer management
 
 (defun meshmonitor-chat--buffer-name (ttype target)
@@ -1728,57 +1756,68 @@ Call CALLBACK with the merged message list."
     (setq meshmonitor-chat--poll-timer nil)))
 
 (defun meshmonitor-chat--poll ()
-  "Poll for new messages in all open chat buffers."
+  "Poll for new messages in all open chat buffers.
+Detects gaps from sleep/suspend and does a full fetch if needed."
   (when meshmonitor-chat--connected
-    (setq meshmonitor-chat--chat-buffers
-          (seq-filter (lambda (e) (buffer-live-p (cdr e)))
-                      meshmonitor-chat--chat-buffers))
-    (dolist (entry meshmonitor-chat--chat-buffers)
-      (let* ((key (car entry))
-             (buf (cdr entry))
-             (ttype (car key))
-             (target (cdr key))
-             (since (with-current-buffer buf
-                      meshmonitor-chat--last-timestamp))
-             (render-cb
-              (lambda (result)
-                (when result
-                  (let ((msgs (alist-get 'data (cdr result))))
-                    (when msgs
-                      (meshmonitor-chat--render-messages
-                       buf msgs)))))))
-        (pcase ttype
-          ('channel
-           (let ((params `((channel . ,target) (limit . 20))))
-             (when since
-               (push `(since . ,(1+ since)) params))
-             (meshmonitor-chat--api-messages params render-cb)))
-          ('dm
-           (let ((params-from
-                  `((fromNodeId . ,target) (limit . 20)))
-                 (params-to
-                  `((toNodeId . ,target) (limit . 20)))
-                 (all-msgs nil)
-                 (dm-pending 2))
-             (when since
-               (push `(since . ,(1+ since)) params-from)
-               (push `(since . ,(1+ since)) params-to))
-             (let ((dm-handler
-                    (lambda (result)
-                      (when result
-                        (let ((msgs (alist-get 'data (cdr result))))
-                          (when msgs
-                            (setq all-msgs
-                                  (append msgs all-msgs)))))
-                      (setq dm-pending (1- dm-pending))
-                      (when (zerop dm-pending)
-                        (when all-msgs
-                          (meshmonitor-chat--render-messages
-                           buf all-msgs))))))
-               (meshmonitor-chat--api-messages
-                params-from dm-handler)
-               (meshmonitor-chat--api-messages
-                params-to dm-handler)))))))))
+    (let* ((now (float-time))
+           (gap-p (and meshmonitor-chat--last-poll-time
+                       (> (- now meshmonitor-chat--last-poll-time)
+                          (* 2 meshmonitor-chat-poll-interval)))))
+      (setq meshmonitor-chat--last-poll-time now)
+      (setq meshmonitor-chat--chat-buffers
+            (seq-filter (lambda (e) (buffer-live-p (cdr e)))
+                        meshmonitor-chat--chat-buffers))
+      (dolist (entry meshmonitor-chat--chat-buffers)
+        (let* ((key (car entry))
+               (buf (cdr entry))
+               (ttype (car key))
+               (target (cdr key))
+               (since (unless gap-p
+                        (with-current-buffer buf
+                          meshmonitor-chat--last-timestamp)))
+               (limit (if gap-p
+                          meshmonitor-chat-message-limit 20))
+               (render-cb
+                (lambda (result)
+                  (when result
+                    (let ((msgs (alist-get 'data (cdr result))))
+                      (when msgs
+                        (meshmonitor-chat--render-messages
+                         buf msgs)))))))
+          (pcase ttype
+            ('channel
+             (let ((params `((channel . ,target)
+                             (limit . ,limit))))
+               (when since
+                 (push `(since . ,(1+ since)) params))
+               (meshmonitor-chat--api-messages params render-cb)))
+            ('dm
+             (let ((params-from
+                    `((fromNodeId . ,target) (limit . ,limit)))
+                   (params-to
+                    `((toNodeId . ,target) (limit . ,limit)))
+                   (all-msgs nil)
+                   (dm-pending 2))
+               (when since
+                 (push `(since . ,(1+ since)) params-from)
+                 (push `(since . ,(1+ since)) params-to))
+               (let ((dm-handler
+                      (lambda (result)
+                        (when result
+                          (let ((msgs (alist-get 'data
+                                                 (cdr result))))
+                            (when msgs
+                              (setq all-msgs
+                                    (append msgs all-msgs)))))
+                        (setq dm-pending (1- dm-pending))
+                        (when (zerop dm-pending)
+                          (when all-msgs
+                            (meshmonitor-chat--render-messages
+                             buf all-msgs))))))
+                 (meshmonitor-chat--api-messages
+                  params-from dm-handler)
+                 (meshmonitor-chat--api-messages
+                  params-to dm-handler))))))))))
 
 ;;;; Notifications
 
@@ -1811,6 +1850,7 @@ TEXT is the message content, TARGET-TYPE and TARGET identify the chat."
   (setq meshmonitor-chat--connected nil
         meshmonitor-chat--auth-token nil
         meshmonitor-chat--csrf-token nil
+        meshmonitor-chat--last-poll-time nil
         meshmonitor-chat--base-url nil
         meshmonitor-chat--my-node-id nil
         meshmonitor-chat--my-node-num nil
