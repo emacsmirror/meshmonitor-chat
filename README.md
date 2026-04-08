@@ -114,7 +114,8 @@ Connects directly to the [MeshMonitor REST API](https://meshmonitor.org/) using 
 - **Request position**: press `p` on a node to request its position.
 - **Key exchange check**: DM is blocked for nodes without encryption keys (no PKC).
 - **Desktop notifications**: get notified when new messages arrive in background buffers.
-- **Polling**: automatic periodic fetch of new messages in open chat buffers.
+- **Polling**: automatic periodic fetch of new messages in open chat buffers. Auto-recovers after sleep/suspend.
+- **Refresh**: press `C-c C-l` to reload the full message history in any chat buffer.
 - **Input size indicator**: mode-line shows byte count with warnings for large messages (LoRa limit ~200 bytes per part, max 3 parts).
 - **UTF-8 support**: correctly displays accented characters and emojis from mesh nodes.
 - **Message deduplication**: avoids rendering the same message twice.
@@ -145,6 +146,7 @@ Connects directly to the [MeshMonitor REST API](https://meshmonitor.org/) using 
 | `C-c C-e` | React with emoji at point    |
 | `C-c C-k` | Cancel reply                 |
 | `C-c C-d` | Open DM with sender at point |
+| `C-c C-l` | Reload message history        |
 
 ## Installation
 
