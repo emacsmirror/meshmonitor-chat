@@ -1081,31 +1081,19 @@ MESSAGES is a list of message alists from the API."
                      "Message too long (max ~600 bytes, 3 parts)"
                      nil t))
                    ((and result (= status 503))
-                    (message "MeshMonitor: node not connected")
                     (meshmonitor-chat--insert-msg
                      buf nil nil
                      "Meshtastic node not connected" nil t))
-                   ((null result)
-                    (message "MeshMonitor: send failed (no response)")
-                    (meshmonitor-chat--insert-msg
-                     buf nil nil
-                     "Send failed (no response from server)"
-                     nil t))
                    (t
-                    (message "MeshMonitor: send failed (HTTP %s)"
-                             status)
                     (meshmonitor-chat--insert-msg
                      buf nil nil
-                     (format "Send failed (HTTP %s)" status)
+                     (format "Send failed (HTTP %s)"
+                             (or status "timeout"))
                      nil t)))))))
       (pcase ttype
         ('channel
-         (message "MeshMonitor: sending to #%s..."
-                  (meshmonitor-chat--channel-name target))
          (meshmonitor-chat--api-send text target nil reply-id cb))
         ('dm
-         (message "MeshMonitor: sending to %s..."
-                  (meshmonitor-chat--node-name target))
          (meshmonitor-chat--api-send text nil target reply-id cb))
         (_ (user-error "No target set for this buffer"))))))
 
