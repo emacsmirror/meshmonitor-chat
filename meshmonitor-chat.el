@@ -954,37 +954,35 @@ MESSAGES is a list of message alists from the API."
       ;; Render regular messages.
       (dolist (msg regular)
         (let ((id (alist-get 'id msg)))
+          ;; Always check delivery, even for already-seen messages.
+          (meshmonitor-chat--check-delivery msg buffer)
           (unless (and id (with-current-buffer buffer
                             (gethash id meshmonitor-chat--seen-ids)))
-            (meshmonitor-chat--check-delivery msg buffer)
-            (unless (and id (with-current-buffer buffer
-                              (gethash id
-                                       meshmonitor-chat--seen-ids)))
-              (let* ((from (or (alist-get 'fromNodeId msg)
-                               (alist-get 'from msg)))
-                     (sender (meshmonitor-chat--node-name from))
-                     (text (or (alist-get 'text msg) ""))
-                     (ts (alist-get 'timestamp msg))
-                     (selfp (meshmonitor-chat--is-self-p msg))
-                     (unix-ts (meshmonitor-chat--parse-timestamp ts))
-                     (req-id (meshmonitor-chat--extract-request-id
-                              msg))
-                     (delivery (when selfp
-                                 (meshmonitor-chat--msg-delivery-state
-                                  msg))))
-                (if (and selfp delivery)
-                    (meshmonitor-chat--insert-sent-msg
-                     buffer ts sender text delivery)
-                  (meshmonitor-chat--insert-msg
-                   buffer ts sender text selfp nil req-id from)
-                  (unless (or selfp (get-buffer-window buffer))
-                    (with-current-buffer buffer
-                      (meshmonitor-chat--notify
-                       sender text
-                       meshmonitor-chat--target-type
-                       meshmonitor-chat--target))))
-                (meshmonitor-chat--mark-seen
-                 buffer id unix-ts))))))
+            (let* ((from (or (alist-get 'fromNodeId msg)
+                             (alist-get 'from msg)))
+                   (sender (meshmonitor-chat--node-name from))
+                   (text (or (alist-get 'text msg) ""))
+                   (ts (alist-get 'timestamp msg))
+                   (selfp (meshmonitor-chat--is-self-p msg))
+                   (unix-ts (meshmonitor-chat--parse-timestamp ts))
+                   (req-id (meshmonitor-chat--extract-request-id
+                            msg))
+                   (delivery (when selfp
+                               (meshmonitor-chat--msg-delivery-state
+                                msg))))
+              (if (and selfp delivery)
+                  (meshmonitor-chat--insert-sent-msg
+                   buffer ts sender text delivery)
+                (meshmonitor-chat--insert-msg
+                 buffer ts sender text selfp nil req-id from)
+                (unless (or selfp (get-buffer-window buffer))
+                  (with-current-buffer buffer
+                    (meshmonitor-chat--notify
+                     sender text
+                     meshmonitor-chat--target-type
+                     meshmonitor-chat--target))))
+              (meshmonitor-chat--mark-seen
+               buffer id unix-ts)))))
       ;; Process emoji reactions.
       (dolist (msg reactions)
         (let ((id (alist-get 'id msg))
