@@ -764,13 +764,15 @@ Handles marker manipulation and cursor restoration."
 
 (defun meshmonitor-chat--insert-msg (buffer ts sender text
                                             &optional selfp sysp
-                                            request-id from-id)
+                                            request-id from-id
+                                            reply-to-name)
   "Insert a chat message into BUFFER.
 TS is the timestamp, SENDER the display name, TEXT the content.
 SELFP non-nil marks the message as from the local node.
 SYSP non-nil renders a system notification instead.
 REQUEST-ID is stored as text property for reply support.
-FROM-ID is the sender node ID for opening DMs."
+FROM-ID is the sender node ID for opening DMs.
+REPLY-TO-NAME shows a reply indicator when non-nil."
   (meshmonitor-chat--insert-at-prompt
    buffer
    (lambda ()
@@ -790,6 +792,9 @@ FROM-ID is the sender node ID for opening DMs."
            'face (if selfp
                      'meshmonitor-chat-nick-self-face
                    'meshmonitor-chat-nick-other-face))
+          (when reply-to-name
+            (propertize (format "↩ %s: " reply-to-name)
+                        'face 'meshmonitor-chat-system-face))
           text "\n"))
        'read-only t
        'rear-nonsticky t
@@ -870,6 +875,26 @@ the id field (format nodeNum_requestId)."
 (defun meshmonitor-chat--reaction-p (msg)
   "Return non-nil if MSG is an emoji reaction."
   (equal (alist-get 'emoji msg) 1))
+
+(defun meshmonitor-chat--find-reply-sender (buffer reply-id)
+  "Find the sender name of the message with REQUEST-ID REPLY-ID in BUFFER."
+  (when (and reply-id (buffer-live-p buffer))
+    (with-current-buffer buffer
+      (save-excursion
+        (goto-char (point-min))
+        (let ((limit (marker-position meshmonitor-chat--prompt-start))
+              (found nil))
+          (while (and (not found) (< (point) limit))
+            (when (equal (get-text-property (point)
+                                            'meshmonitor-chat-request-id)
+                         reply-id)
+              (setq found (get-text-property (point)
+                                             'meshmonitor-chat-sender)))
+            (goto-char (or (next-single-property-change
+                            (point) 'meshmonitor-chat-request-id
+                            nil limit)
+                           limit)))
+          found)))))
 
 (defun meshmonitor-chat--find-request-id-pos (request-id)
   "Find buffer position of message with REQUEST-ID, or nil."
@@ -967,6 +992,9 @@ MESSAGES is a list of message alists from the API."
                    (unix-ts (meshmonitor-chat--parse-timestamp ts))
                    (req-id (meshmonitor-chat--extract-request-id
                             msg))
+                   (reply-id (alist-get 'replyId msg))
+                   (reply-name (meshmonitor-chat--find-reply-sender
+                                buffer reply-id))
                    (delivery (when selfp
                                (meshmonitor-chat--msg-delivery-state
                                 msg))))
@@ -974,7 +1002,8 @@ MESSAGES is a list of message alists from the API."
                   (meshmonitor-chat--insert-sent-msg
                    buffer ts sender text delivery)
                 (meshmonitor-chat--insert-msg
-                 buffer ts sender text selfp nil req-id from)
+                 buffer ts sender text selfp nil req-id from
+                 reply-name)
                 (unless (or selfp (get-buffer-window buffer))
                   (with-current-buffer buffer
                     (meshmonitor-chat--notify

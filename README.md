@@ -89,9 +89,9 @@ Connects directly to the [MeshMonitor REST API](https://meshmonitor.org/) using 
 [08:45] <Mountain Peak> Anyone near the trailhead?
 [09:02] <Hilltop Relay> I can see 12 nodes from up here
   ↳ 🔥 Mountain Peak, 👀 River Bridge
-[09:05] <BaseStation K9> Nice coverage, checking in from base
+[09:05] <BaseStation K9> ↩ Hilltop Relay: Nice coverage!
 [09:30] <River Bridge> Just set up a new repeater
-[09:31] <Solar Node 7> Welcome aboard!
+[09:31] <Solar Node 7> ↩ River Bridge: Welcome aboard!
   ↳ 🎉 BaseStation K9
 [09:33] <River Bridge> Thanks, running on solar
 [09:41] <BaseStation K9> Testing now ·
@@ -108,7 +108,7 @@ Connects directly to the [MeshMonitor REST API](https://meshmonitor.org/) using 
 - **Chat buffers**: read and send messages with an ERC-like prompt interface.
 - **Delivery confirmation**: sent messages display `·` (pending), `✓` (confirmed) or `✗` (failed).
 - **Resend**: place cursor on a failed message and press `C-c C-r` to resend.
-- **Reply**: press `C-c C-p` on a message to reply to it, the prompt shows the reply context.
+- **Reply**: press `C-c C-r` on a message to reply to it. Replies show `↩ Name:` prefix.
 - **Emoji reactions**: press `C-c C-e` on a message to react with an emoji. Reactions from others appear inline below the message.
 - **Traceroute**: press `t` on a node to send a traceroute.
 - **Request position**: press `p` on a node to request its position.
