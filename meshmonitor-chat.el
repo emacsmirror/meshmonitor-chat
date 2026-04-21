@@ -914,42 +914,55 @@ the id field (format nodeNum_requestId)."
       found)))
 
 (defun meshmonitor-chat--render-reaction-line (buffer reply-id)
-  "Render or update the reaction display for REPLY-ID in BUFFER."
+  "Render the reaction line for REPLY-ID in BUFFER.
+All consecutive reaction lines under the anchor message are merged
+into a single line so that reactions arriving with distinct REPLY-ID
+values but targeting the same visible message no longer stack."
   (when (buffer-live-p buffer)
     (with-current-buffer buffer
-      (let ((reactions (gethash reply-id meshmonitor-chat--reactions))
-            (inhibit-read-only t))
-        (when reactions
-          (let ((msg-pos (meshmonitor-chat--find-request-id-pos
-                          reply-id)))
-            (when msg-pos
-              (save-excursion
-                (goto-char msg-pos)
-                (forward-line 1)
-                ;; Delete existing reaction line if present.
-                (when (and (< (point)
-                              (marker-position
-                               meshmonitor-chat--prompt-start))
-                           (equal (get-text-property
-                                   (point)
-                                   'meshmonitor-chat-reaction-for)
-                                  reply-id))
-                  (delete-region (point)
-                                 (save-excursion
-                                   (forward-line 1) (point))))
-                ;; Insert updated reaction line.
-                (insert
-                 (propertize
-                  (format "  ↳ %s\n"
-                          (mapconcat
-                           (lambda (r)
-                             (format "%s %s" (car r) (cdr r)))
-                           (reverse reactions) ", "))
-                  'face 'meshmonitor-chat-system-face
-                  'read-only t
-                  'rear-nonsticky t
-                  'front-sticky t
-                  'meshmonitor-chat-reaction-for reply-id))))))))))
+      (let ((inhibit-read-only t)
+            (msg-pos (meshmonitor-chat--find-request-id-pos reply-id)))
+        (when msg-pos
+          (save-excursion
+            (goto-char msg-pos)
+            (forward-line 1)
+            (let ((start (point))
+                  (limit (marker-position
+                          meshmonitor-chat--prompt-start))
+                  (reply-ids (list reply-id)))
+              ;; Collect reply-ids from any adjacent reaction lines.
+              (while (and (< (point) limit)
+                          (get-text-property
+                           (point) 'meshmonitor-chat-reaction-for))
+                (let ((rid (get-text-property
+                            (point) 'meshmonitor-chat-reaction-for)))
+                  (unless (member rid reply-ids)
+                    (push rid reply-ids)))
+                (forward-line 1))
+              (delete-region start (point))
+              ;; Merge reactions from every collected bucket, deduped.
+              (let ((seen (make-hash-table :test 'equal))
+                    (merged '()))
+                (dolist (rid reply-ids)
+                  (dolist (r (gethash
+                              rid meshmonitor-chat--reactions))
+                    (unless (gethash r seen)
+                      (puthash r t seen)
+                      (push r merged))))
+                (when merged
+                  (goto-char start)
+                  (insert
+                   (propertize
+                    (format "  ↳ %s\n"
+                            (mapconcat
+                             (lambda (r)
+                               (format "%s %s" (car r) (cdr r)))
+                             (nreverse merged) ", "))
+                    'face 'meshmonitor-chat-system-face
+                    'read-only t
+                    'rear-nonsticky t
+                    'front-sticky t
+                    'meshmonitor-chat-reaction-for reply-id)))))))))))
 
 (defun meshmonitor-chat--mark-seen (buffer id unix-ts)
   "Mark message ID as seen in BUFFER and update last timestamp to UNIX-TS."
