@@ -627,7 +627,9 @@ CALLBACK works like `meshmonitor-chat--request'."
                 (let ((msg-id (alist-get 'id msg)))
                   (when msg-id
                     (puthash msg-id t
-                             meshmonitor-chat--seen-ids)))))))))))
+                             meshmonitor-chat--seen-ids)))
+                (puthash (cons 'req req-id) t
+                         meshmonitor-chat--seen-ids)))))))))
 
 ;;;; Chat mode
 
@@ -964,11 +966,16 @@ values but targeting the same visible message no longer stack."
                     'front-sticky t
                     'meshmonitor-chat-reaction-for reply-id)))))))))))
 
-(defun meshmonitor-chat--mark-seen (buffer id unix-ts)
-  "Mark message ID as seen in BUFFER and update last timestamp to UNIX-TS."
+(defun meshmonitor-chat--mark-seen (buffer id req-id unix-ts)
+  "Mark message as seen in BUFFER and update last timestamp to UNIX-TS.
+ID is the message id (unstable across lifecycle).  REQ-ID is the
+stable Meshtastic request id, tracked under a namespaced key so the
+poll can dedup even when the id string format changes."
   (with-current-buffer buffer
     (when id
       (puthash id t meshmonitor-chat--seen-ids))
+    (when req-id
+      (puthash (cons 'req req-id) t meshmonitor-chat--seen-ids))
     (when (or (null meshmonitor-chat--last-timestamp)
               (> unix-ts meshmonitor-chat--last-timestamp))
       (setq meshmonitor-chat--last-timestamp unix-ts))))
@@ -991,11 +998,16 @@ MESSAGES is a list of message alists from the API."
                                   sorted)))
       ;; Render regular messages.
       (dolist (msg regular)
-        (let ((id (alist-get 'id msg)))
+        (let ((id (alist-get 'id msg))
+              (req-id (meshmonitor-chat--extract-request-id msg)))
           ;; Always check delivery, even for already-seen messages.
           (meshmonitor-chat--check-delivery msg buffer)
-          (unless (and id (with-current-buffer buffer
-                            (gethash id meshmonitor-chat--seen-ids)))
+          (unless (with-current-buffer buffer
+                    (or (and id (gethash id
+                                         meshmonitor-chat--seen-ids))
+                        (and req-id
+                             (gethash (cons 'req req-id)
+                                      meshmonitor-chat--seen-ids))))
             (let* ((from (or (alist-get 'fromNodeId msg)
                              (alist-get 'from msg)))
                    (sender (meshmonitor-chat--node-name from))
@@ -1003,8 +1015,6 @@ MESSAGES is a list of message alists from the API."
                    (ts (alist-get 'timestamp msg))
                    (selfp (meshmonitor-chat--is-self-p msg))
                    (unix-ts (meshmonitor-chat--parse-timestamp ts))
-                   (req-id (meshmonitor-chat--extract-request-id
-                            msg))
                    (reply-id (alist-get 'replyId msg))
                    (reply-name (meshmonitor-chat--find-reply-sender
                                 buffer reply-id))
@@ -1013,7 +1023,7 @@ MESSAGES is a list of message alists from the API."
                                 msg))))
               (if (and selfp delivery)
                   (meshmonitor-chat--insert-sent-msg
-                   buffer ts sender text delivery)
+                   buffer ts sender text delivery req-id)
                 (meshmonitor-chat--insert-msg
                  buffer ts sender text selfp nil req-id from
                  reply-name)
@@ -1024,7 +1034,7 @@ MESSAGES is a list of message alists from the API."
                      meshmonitor-chat--target-type
                      meshmonitor-chat--target))))
               (meshmonitor-chat--mark-seen
-               buffer id unix-ts)))))
+               buffer id req-id unix-ts)))))
       ;; Process emoji reactions.
       (dolist (msg reactions)
         (let ((id (alist-get 'id msg))
@@ -1047,7 +1057,8 @@ MESSAGES is a list of message alists from the API."
                            meshmonitor-chat--reactions)))
               (meshmonitor-chat--render-reaction-line
                buffer reply-id))
-            (meshmonitor-chat--mark-seen buffer id unix-ts))))
+            (meshmonitor-chat--mark-seen
+             buffer id nil unix-ts))))
       ;; Mark conversation as read when buffer is visible.
       (when (get-buffer-window buffer)
         (with-current-buffer buffer
@@ -1097,17 +1108,25 @@ MESSAGES is a list of message alists from the API."
                            (meshmonitor-chat--node-name
                             (or meshmonitor-chat--my-node-id "me"))))
                       (when (buffer-live-p buf)
-                        (unless (and msg-id
-                                     (with-current-buffer buf
-                                       (gethash
-                                        msg-id
-                                        meshmonitor-chat--seen-ids)))
+                        (unless (with-current-buffer buf
+                                  (or (and msg-id
+                                           (gethash
+                                            msg-id
+                                            meshmonitor-chat--seen-ids))
+                                      (and req-id
+                                           (gethash
+                                            (cons 'req req-id)
+                                            meshmonitor-chat--seen-ids))))
                           (meshmonitor-chat--insert-sent-msg
                            buf (float-time) sender text
                            'pending req-id))
                         (when msg-id
                           (with-current-buffer buf
                             (puthash msg-id t
+                                     meshmonitor-chat--seen-ids)))
+                        (when req-id
+                          (with-current-buffer buf
+                            (puthash (cons 'req req-id) t
                                      meshmonitor-chat--seen-ids))))
                       (when (> parts 1)
                         (meshmonitor-chat--insert-msg
