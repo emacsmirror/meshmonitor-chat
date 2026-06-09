@@ -926,16 +926,20 @@ values but targeting the same visible message no longer stack."
             (msg-pos (meshmonitor-chat--find-request-id-pos reply-id)))
         (when msg-pos
           (save-excursion
-            (goto-char msg-pos)
-            (forward-line 1)
+            ;; Move past the whole anchor message, not just one line, so
+            ;; multi-line messages are never split by the reaction line.
+            (goto-char (or (next-single-property-change
+                            msg-pos 'meshmonitor-chat-request-id)
+                           (point-max)))
             (let ((start (point))
-                  (limit (marker-position
-                          meshmonitor-chat--prompt-start))
                   (reply-ids (list reply-id)))
-              ;; Collect reply-ids from any adjacent reaction lines.
-              (while (and (< (point) limit)
-                          (get-text-property
-                           (point) 'meshmonitor-chat-reaction-for))
+              ;; Collect reply-ids from every adjacent reaction line.  The
+              ;; scan is bounded by the reaction property itself, not by the
+              ;; prompt marker: when the anchor is the last message the line
+              ;; sits at the prompt boundary, and a marker-based limit would
+              ;; miss it and stack a duplicate instead of merging.
+              (while (get-text-property
+                      (point) 'meshmonitor-chat-reaction-for)
                 (let ((rid (get-text-property
                             (point) 'meshmonitor-chat-reaction-for)))
                   (unless (member rid reply-ids)
@@ -953,6 +957,11 @@ values but targeting the same visible message no longer stack."
                       (push r merged))))
                 (when merged
                   (goto-char start)
+                  ;; Keep the reaction line inside the message area: when it
+                  ;; is inserted exactly at the prompt, advance the marker so
+                  ;; the prompt stays below it.
+                  (set-marker-insertion-type
+                   meshmonitor-chat--prompt-start t)
                   (insert
                    (propertize
                     (format "  ↳ %s\n"
@@ -964,7 +973,9 @@ values but targeting the same visible message no longer stack."
                     'read-only t
                     'rear-nonsticky t
                     'front-sticky t
-                    'meshmonitor-chat-reaction-for reply-id)))))))))))
+                    'meshmonitor-chat-reaction-for reply-id))
+                  (set-marker-insertion-type
+                   meshmonitor-chat--prompt-start nil))))))))))
 
 (defun meshmonitor-chat--mark-seen (buffer id req-id unix-ts)
   "Mark message as seen in BUFFER and update last timestamp to UNIX-TS.
