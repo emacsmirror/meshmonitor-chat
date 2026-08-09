@@ -4,7 +4,7 @@
 
 ;; Author: Andros Fenollosa <hi@andros.dev>
 ;; Maintainer: Andros Fenollosa <hi@andros.dev>
-;; Version: 1.0.0
+;; Version: 1.1.0
 ;; Package-Requires: ((emacs "28.1"))
 ;; Keywords: comm
 ;; URL: https://git.andros.dev/andros/meshmonitor-chat.el
@@ -83,8 +83,16 @@ When set, username/password login is skipped."
   "Password for MeshMonitor authentication."
   :type 'string)
 
-(defcustom meshmonitor-chat-login-endpoint "/auth/login"
+(defcustom meshmonitor-chat-login-endpoint "/api/auth/login"
   "API endpoint path for login."
+  :type 'string)
+
+(defcustom meshmonitor-chat-source-id "default"
+  "Source identifier for MeshMonitor v1 API endpoints.
+MeshMonitor 4.0 introduced a multi-source architecture and moved
+the v1 resource endpoints under a per-source prefix
+\"/api/v1/sources/<id>/\".  The special value \"default\" targets
+the first source the configured token or session can read."
   :type 'string)
 
 (defcustom meshmonitor-chat-poll-interval 10
@@ -238,6 +246,13 @@ Handles millisecond timestamps from MeshMonitor API."
   "Build full URL for API ENDPOINT."
   (concat meshmonitor-chat--base-url endpoint))
 
+(defun meshmonitor-chat--v1-path (suffix)
+  "Build a source-scoped MeshMonitor v1 API path for SUFFIX.
+SUFFIX is the path after the source segment, e.g. \"messages\".
+MeshMonitor 4.0+ requires v1 endpoints to be scoped under
+\"/api/v1/sources/<id>/\"; see `meshmonitor-chat-source-id'."
+  (format "/api/v1/sources/%s/%s" meshmonitor-chat-source-id suffix))
+
 (defun meshmonitor-chat--request (method endpoint &optional data callback)
   "Make an HTTP request with METHOD to ENDPOINT.
 DATA is an alist to send as JSON body.
@@ -373,7 +388,8 @@ Return non-nil on success."
 
 (defun meshmonitor-chat--fetch-nodes-sync ()
   "Fetch and cache nodes synchronously."
-  (let ((result (meshmonitor-chat--request "GET" "/api/v1/nodes")))
+  (let ((result (meshmonitor-chat--request
+                 "GET" (meshmonitor-chat--v1-path "nodes"))))
     (when result
       (meshmonitor-chat--process-nodes
        (alist-get 'data (cdr result))))))
@@ -382,7 +398,7 @@ Return non-nil on success."
   "Fetch and cache nodes asynchronously.
 Call CALLBACK with no arguments when done."
   (meshmonitor-chat--request
-   "GET" "/api/v1/nodes" nil
+   "GET" (meshmonitor-chat--v1-path "nodes") nil
    (lambda (result)
      (when result
        (meshmonitor-chat--process-nodes
@@ -405,7 +421,7 @@ Falls back to ID itself when no name is cached."
 (defun meshmonitor-chat--fetch-channels-sync ()
   "Fetch and cache channels synchronously."
   (let ((result (meshmonitor-chat--request
-                 "GET" "/api/v1/channels")))
+                 "GET" (meshmonitor-chat--v1-path "channels"))))
     (when result
       (setq meshmonitor-chat--channels
             (alist-get 'data (cdr result))))))
@@ -414,7 +430,7 @@ Falls back to ID itself when no name is cached."
   "Fetch channels asynchronously.
 Call CALLBACK with the channel list when done."
   (meshmonitor-chat--request
-   "GET" "/api/v1/channels" nil
+   "GET" (meshmonitor-chat--v1-path "channels") nil
    (lambda (result)
      (when result
        (setq meshmonitor-chat--channels
@@ -444,7 +460,8 @@ Call CALLBACK with (STATUS . BODY)."
                           (url-hexify-string (format "%s" (cdr p)))))
                 params "&")))
     (meshmonitor-chat--request
-     "GET" (concat "/api/v1/messages?" query) nil callback)))
+     "GET" (concat (meshmonitor-chat--v1-path "messages") "?" query)
+     nil callback)))
 
 (defun meshmonitor-chat--api-send (text &optional channel to-node
                                              reply-id callback)
@@ -456,7 +473,7 @@ Call CALLBACK with (STATUS . BODY)."
     (when to-node (push `(toNodeId . ,to-node) data))
     (when reply-id (push `(replyId . ,reply-id) data))
     (meshmonitor-chat--request
-     "POST" "/api/v1/messages" data callback)))
+     "POST" (meshmonitor-chat--v1-path "messages") data callback)))
 
 ;;;; Session-authenticated requests (for internal API)
 
@@ -1938,7 +1955,8 @@ Try legacy endpoint first (more data), fall back to v1."
   (let ((result (meshmonitor-chat--request "GET" "/api/status")))
     (if (and result (< (car result) 400))
         result
-      (meshmonitor-chat--request "GET" "/api/v1/status"))))
+      (meshmonitor-chat--request
+       "GET" (meshmonitor-chat--v1-path "status")))))
 
 (defun meshmonitor-chat--fetch-status (callback)
   "Fetch server status asynchronously.
@@ -1950,7 +1968,7 @@ Call CALLBACK with (STATUS-CODE . BODY)."
      (if (and result (< (car result) 400))
          (funcall callback result)
        (meshmonitor-chat--request
-        "GET" "/api/v1/status" nil callback)))))
+        "GET" (meshmonitor-chat--v1-path "status") nil callback)))))
 
 (defun meshmonitor-chat--json-true-p (value)
   "Return non-nil if JSON VALUE is true.

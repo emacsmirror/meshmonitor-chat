@@ -228,12 +228,15 @@ Username/password authentication is also supported via `meshmonitor-chat-usernam
 
 ## API
 
-This package uses the MeshMonitor REST API v1:
+This package uses the MeshMonitor REST API v1.  Since MeshMonitor 4.0 the
+v1 endpoints are scoped under a per-source prefix `/api/v1/sources/<id>/`;
+the source is configurable via `meshmonitor-chat-source-id` (default
+`default`, which targets the first readable source):
 
-- `GET /api/v1/channels`: list channels.
-- `GET /api/v1/nodes`: list mesh nodes.
-- `GET /api/v1/messages`: fetch messages with filters.
-- `POST /api/v1/messages`: send messages.
+- `GET /api/v1/sources/<id>/channels`: list channels.
+- `GET /api/v1/sources/<id>/nodes`: list mesh nodes.
+- `GET /api/v1/sources/<id>/messages`: fetch messages with filters.
+- `POST /api/v1/sources/<id>/messages`: send messages.
 - `GET /api/status`: connection and node info.
 
 See the [MeshMonitor documentation](https://meshmonitor.org/) for details.
