@@ -221,6 +221,7 @@ Key options:
 - `meshmonitor-chat-port` (default `3000`): server port.
 - `meshmonitor-chat-token`: Bearer token for API authentication.
 - `meshmonitor-chat-use-tls` (default `nil`): use HTTPS.
+- `meshmonitor-chat-source-id` (default `"default"`): source for the per-source v1 endpoints in MeshMonitor 4.0+ (`default` targets the first readable source).
 - `meshmonitor-chat-poll-interval` (default `10`): seconds between polling for new messages.
 - `meshmonitor-chat-message-limit` (default `50`): number of messages to fetch per request.
 - `meshmonitor-chat-timestamp-format` (default `"%H:%M"`): format for message timestamps.
