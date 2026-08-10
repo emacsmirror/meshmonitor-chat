@@ -4,7 +4,7 @@
 
 ;; Author: Andros Fenollosa <hi@andros.dev>
 ;; Maintainer: Andros Fenollosa <hi@andros.dev>
-;; Version: 1.1.0
+;; Version: 1.2.0
 ;; Package-Requires: ((emacs "28.1"))
 ;; Keywords: comm
 ;; URL: https://git.andros.dev/andros/meshmonitor-chat.el
@@ -658,6 +658,7 @@ CALLBACK works like `meshmonitor-chat--request'."
     (define-key map (kbd "C-c C-r") #'meshmonitor-chat-reply)
     (define-key map (kbd "C-c C-s") #'meshmonitor-chat-resend)
     (define-key map (kbd "C-c C-e") #'meshmonitor-chat-react)
+    (define-key map (kbd "C-c C-i") #'meshmonitor-chat-message-info)
     (define-key map (kbd "C-c C-k") #'meshmonitor-chat-cancel-reply)
     (define-key map (kbd "C-c C-d") #'meshmonitor-chat-dm-at-point)
     (define-key map (kbd "C-c C-l") #'meshmonitor-chat-refresh-chat)
@@ -784,14 +785,15 @@ Handles marker manipulation and cursor restoration."
 (defun meshmonitor-chat--insert-msg (buffer ts sender text
                                             &optional selfp sysp
                                             request-id from-id
-                                            reply-to-name)
+                                            reply-to-name msg)
   "Insert a chat message into BUFFER.
 TS is the timestamp, SENDER the display name, TEXT the content.
 SELFP non-nil marks the message as from the local node.
 SYSP non-nil renders a system notification instead.
 REQUEST-ID is stored as text property for reply support.
 FROM-ID is the sender node ID for opening DMs.
-REPLY-TO-NAME shows a reply indicator when non-nil."
+REPLY-TO-NAME shows a reply indicator when non-nil.
+MSG is the full message alist, stored for the info command."
   (meshmonitor-chat--insert-at-prompt
    buffer
    (lambda ()
@@ -822,15 +824,18 @@ REPLY-TO-NAME shows a reply indicator when non-nil."
        'meshmonitor-chat-msg-text text
        'meshmonitor-chat-request-id request-id
        'meshmonitor-chat-sender sender
-       'meshmonitor-chat-from-id from-id)))))
+       'meshmonitor-chat-from-id from-id
+       'meshmonitor-chat-msg msg)))))
 
 (defun meshmonitor-chat--insert-sent-msg (buffer ts sender text
                                                  delivery
-                                                 &optional request-id)
+                                                 &optional request-id
+                                                 msg)
   "Insert a self message into BUFFER with DELIVERY state icon.
 TS is the timestamp, SENDER the display name, TEXT the content.
 DELIVERY is a symbol: `pending', `confirmed' or `failed'.
-REQUEST-ID enables delivery tracking when DELIVERY is `pending'."
+REQUEST-ID enables delivery tracking when DELIVERY is `pending'.
+MSG is the full message alist, stored for the info command."
   (meshmonitor-chat--insert-at-prompt
    buffer
    (lambda ()
@@ -847,7 +852,10 @@ REQUEST-ID enables delivery tracking when DELIVERY is `pending'."
                     'face 'meshmonitor-chat-nick-self-face)
         text " ")
        'read-only t 'rear-nonsticky t 'front-sticky t
-       'meshmonitor-chat-msg-text text))
+       'meshmonitor-chat-msg-text text
+       'meshmonitor-chat-request-id request-id
+       'meshmonitor-chat-sender sender
+       'meshmonitor-chat-msg msg))
      (let ((icon-pos (point)))
        (insert (meshmonitor-chat--delivery-icon delivery))
        (insert (propertize "\n" 'read-only t 'rear-nonsticky t))
@@ -1051,10 +1059,10 @@ MESSAGES is a list of message alists from the API."
                                 msg))))
               (if (and selfp delivery)
                   (meshmonitor-chat--insert-sent-msg
-                   buffer ts sender text delivery req-id)
+                   buffer ts sender text delivery req-id msg)
                 (meshmonitor-chat--insert-msg
                  buffer ts sender text selfp nil req-id from
-                 reply-name)
+                 reply-name msg)
                 (unless (or selfp (get-buffer-window buffer))
                   (with-current-buffer buffer
                     (meshmonitor-chat--notify
@@ -1324,6 +1332,134 @@ Shows the reaction immediately and sends it via the API."
     (if from-id
         (meshmonitor-chat-open-dm from-id)
       (user-error "No message at point"))))
+
+;;;; Message info
+
+(defun meshmonitor-chat--msg-field (msg key)
+  "Return KEY from MSG, treating `:json-false' and empty strings as nil."
+  (let ((v (alist-get key msg)))
+    (cond
+     ((eq v :json-false) nil)
+     ((and (stringp v) (string-empty-p v)) nil)
+     (t v))))
+
+(defun meshmonitor-chat--bool-str (value)
+  "Format JSON boolean VALUE as \"yes\" or \"no\"."
+  (if (meshmonitor-chat--json-true-p value) "yes" "no"))
+
+(defun meshmonitor-chat--info-node (msg id-key num-key)
+  "Return a \"name (id)\" description for a node referenced in MSG.
+ID-KEY and NUM-KEY are the alist keys holding the node ID and number."
+  (let* ((id (meshmonitor-chat--msg-field msg id-key))
+         (num (meshmonitor-chat--msg-field msg num-key))
+         (key (cond (id id) (num (number-to-string num)) (t nil))))
+    (when key
+      (let ((name (meshmonitor-chat--node-name key)))
+        (if (and id (not (equal name id)))
+            (format "%s (%s)" name id)
+          name)))))
+
+(defun meshmonitor-chat--msg-info-lines (msg)
+  "Build a list of (LABEL . VALUE) pairs describing MSG.
+Pairs with a nil VALUE are omitted by the caller."
+  (let* ((channel (meshmonitor-chat--msg-field msg 'channel))
+         (hop-start (meshmonitor-chat--msg-field msg 'hopStart))
+         (hop-limit (meshmonitor-chat--msg-field msg 'hopLimit))
+         (snr (meshmonitor-chat--msg-field msg 'rxSnr))
+         (rssi (meshmonitor-chat--msg-field msg 'rxRssi))
+         (ts (alist-get 'timestamp msg))
+         (rx (alist-get 'receivedAt msg)))
+    (list
+     (cons "From" (meshmonitor-chat--info-node msg 'fromNodeId
+                                               'fromNodeNum))
+     (cons "To" (if (and (numberp channel) (< channel 0))
+                    (or (meshmonitor-chat--info-node msg 'toNodeId
+                                                     'toNodeNum)
+                        "me")
+                  "broadcast"))
+     (cons "Channel"
+           (if (and (numberp channel) (< channel 0))
+               "direct message"
+             (when (numberp channel)
+               (format "%s (%d)"
+                       (meshmonitor-chat--channel-name channel)
+                       channel))))
+     (cons "Time"
+           (when ts
+             (format-time-string
+              "%Y-%m-%d %H:%M:%S"
+              (seconds-to-time
+               (meshmonitor-chat--parse-timestamp ts)))))
+     (cons "Received"
+           (when (and rx (not (equal rx ts)))
+             (format-time-string
+              "%Y-%m-%d %H:%M:%S"
+              (seconds-to-time
+               (meshmonitor-chat--parse-timestamp rx)))))
+     (cons "Delivery" (meshmonitor-chat--msg-field msg 'deliveryState))
+     (cons "Acknowledged"
+           (when (assq 'acknowledged msg)
+             (meshmonitor-chat--bool-str
+              (alist-get 'acknowledged msg))))
+     ;; Radio.
+     (cons "Hops"
+           (when (and (numberp hop-start) (numberp hop-limit))
+             (format "%d (start %d, remaining %d)"
+                     (max 0 (- hop-start hop-limit))
+                     hop-start hop-limit)))
+     (cons "SNR" (when (numberp snr) (format "%.2f dB" snr)))
+     (cons "RSSI" (when (numberp rssi) (format "%d dBm" rssi)))
+     (cons "Relay node" (meshmonitor-chat--msg-field msg 'relayNode))
+     (cons "Via MQTT"
+           (when (assq 'viaMqtt msg)
+             (meshmonitor-chat--bool-str (alist-get 'viaMqtt msg))))
+     (cons "Decrypted by"
+           (meshmonitor-chat--msg-field msg 'decryptedBy))
+     ;; Identifiers.
+     (cons "Message ID" (let ((id (meshmonitor-chat--msg-field msg 'id)))
+                          (when id (format "%s" id))))
+     (cons "Request ID"
+           (let ((r (meshmonitor-chat--extract-request-id msg)))
+             (when r (number-to-string r))))
+     (cons "Reply to"
+           (let ((r (meshmonitor-chat--msg-field msg 'replyId)))
+             (when (and r (numberp r) (/= r 0))
+               (number-to-string r))))
+     (cons "Port num"
+           (let ((p (meshmonitor-chat--msg-field msg 'portnum)))
+             (when (numberp p) (number-to-string p)))))))
+
+(defun meshmonitor-chat-message-info ()
+  "Show detailed information about the message at point.
+Displays sender, channel, delivery state, hop count and radio
+metrics in a temporary buffer."
+  (interactive)
+  (let ((msg (meshmonitor-chat--get-msg-property-at-line
+              'meshmonitor-chat-msg)))
+    (unless msg
+      (user-error "No message details at point"))
+    (let ((buf (get-buffer-create "*MeshMonitor Message Info*"))
+          (lines (seq-filter #'cdr
+                             (meshmonitor-chat--msg-info-lines msg)))
+          (text (meshmonitor-chat--msg-field msg 'text)))
+      (with-current-buffer buf
+        (let ((inhibit-read-only t))
+          (erase-buffer)
+          (insert (propertize "MeshMonitor Message Info\n"
+                              'face 'bold))
+          (insert (make-string 24 ?═) "\n\n")
+          (dolist (pair lines)
+            (insert (propertize (format "%-14s" (concat (car pair) ":"))
+                                'face 'meshmonitor-chat-system-face))
+            (insert (format "%s\n" (cdr pair))))
+          (when text
+            (insert "\n")
+            (insert (propertize "Text\n" 'face 'bold))
+            (insert (make-string 24 ?─) "\n")
+            (insert text "\n")))
+        (goto-char (point-min))
+        (special-mode))
+      (display-buffer buf))))
 
 (defun meshmonitor-chat-refresh-chat ()
   "Reload message history for the current chat buffer."

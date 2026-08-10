@@ -110,6 +110,7 @@ Connects directly to the [MeshMonitor REST API](https://meshmonitor.org/) using 
 - **Resend**: place cursor on a failed message and press `C-c C-r` to resend.
 - **Reply**: press `C-c C-r` on a message to reply to it. Replies show `↩ Name:` prefix.
 - **Emoji reactions**: press `C-c C-e` on a message to react with an emoji. Reactions from others appear inline below the message.
+- **Message info**: press `C-c C-i` on a message to open a buffer with its details (sender, channel, delivery state, hop count, SNR/RSSI and other radio metadata).
 - **Traceroute**: press `t` on a node to send a traceroute.
 - **Request position**: press `p` on a node to request its position.
 - **Key exchange check**: DM is blocked for nodes without encryption keys (no PKC).
@@ -144,6 +145,7 @@ Connects directly to the [MeshMonitor REST API](https://meshmonitor.org/) using 
 | `C-c C-r` | Reply to message at point    |
 | `C-c C-s` | Resend message at point      |
 | `C-c C-e` | React with emoji at point    |
+| `C-c C-i` | Show message info at point   |
 | `C-c C-k` | Cancel reply                 |
 | `C-c C-d` | Open DM with sender at point |
 | `C-c C-l` | Reload message history        |
