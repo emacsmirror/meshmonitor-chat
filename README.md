@@ -99,6 +99,31 @@ Connects directly to the [MeshMonitor REST API](https://meshmonitor.org/) using 
 #LongFast> _
 ```
 
+### Message info (`C-c C-i` on a message)
+
+```
+MeshMonitor Message Info
+════════════════════════
+
+From:         Hilltop Relay (!a1b2c3d4)
+To:           broadcast
+Channel:      LongFast (0)
+Time:         2026-08-10 09:02:14
+Hops:         2 (start 3, remaining 1)
+SNR:          6.25 dB
+RSSI:         -95 dBm
+Relay node:   0x1a
+Via MQTT:     no
+Decrypted by: node
+Message ID:   2712847316_456789
+Request ID:   456789
+Port num:     1
+
+Text
+────────────────────────
+I can see 12 nodes from up here
+```
+
 ## Features
 
 - **Channel list**: browse available Meshtastic channels in a tabulated buffer.
