@@ -127,13 +127,13 @@ I can see 12 nodes from up here
 ## Features
 
 - **Channel list**: browse available Meshtastic channels in a tabulated buffer.
-- **Node list**: browse all mesh nodes sorted by hop count, with online indicator, key exchange status and last-heard time.
+- **Node list**: browse all mesh nodes sorted by hop count, with online indicator, key exchange status and last-heard time. Press `o` to toggle an online-only filter and `d` to open a DM with the node at point.
 - **Unread messages**: list nodes with unread direct messages, with count and preview.
 - **Direct messages**: list active DM conversations with other nodes.
 - **Chat buffers**: read and send messages with an ERC-like prompt interface.
 - **Delivery confirmation**: sent messages display `·` (pending), `✓` (confirmed) or `✗` (failed).
 - **Resend**: place cursor on a failed message and press `C-c C-r` to resend.
-- **Reply**: press `C-c C-r` on a message to reply to it. Replies show `↩ Name:` prefix.
+- **Reply**: press `C-c C-r` on a message to reply to it. Replies show `↩ Name:` prefix. Cancel a pending reply with `C-c C-k` or `C-g`.
 - **Emoji reactions**: press `C-c C-e` on a message to react with an emoji. Reactions from others appear inline below the message.
 - **Message info**: press `C-c C-i` on a message to open a buffer with its details (sender, channel, delivery state, hop count, SNR/RSSI and other radio metadata).
 - **Traceroute**: press `t` on a node to send a traceroute.
@@ -155,6 +155,8 @@ I can see 12 nodes from up here
 |-------|-----------------------------------|
 | `RET` | Open channel chat or DM with node |
 | `0-7` | Open channel by number (channels) |
+| `d`   | Open DM with node at point (nodes)|
+| `o`   | Toggle online-only filter (nodes) |
 | `t`   | Send traceroute to node (nodes)   |
 | `p`   | Request position from node (nodes)|
 | `g`   | Refresh list from server          |
@@ -172,6 +174,7 @@ I can see 12 nodes from up here
 | `C-c C-e` | React with emoji at point    |
 | `C-c C-i` | Show message info at point   |
 | `C-c C-k` | Cancel reply                 |
+| `C-g`     | Cancel reply (else quit)     |
 | `C-c C-d` | Open DM with sender at point |
 | `C-c C-l` | Reload message history        |
 

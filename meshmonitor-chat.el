@@ -660,6 +660,7 @@ CALLBACK works like `meshmonitor-chat--request'."
     (define-key map (kbd "C-c C-e") #'meshmonitor-chat-react)
     (define-key map (kbd "C-c C-i") #'meshmonitor-chat-message-info)
     (define-key map (kbd "C-c C-k") #'meshmonitor-chat-cancel-reply)
+    (define-key map (kbd "C-g") #'meshmonitor-chat-keyboard-quit)
     (define-key map (kbd "C-c C-d") #'meshmonitor-chat-dm-at-point)
     (define-key map (kbd "C-c C-l") #'meshmonitor-chat-refresh-chat)
     map)
@@ -1266,6 +1267,15 @@ The next sent message will be a reply to this one."
   (meshmonitor-chat--refresh-prompt)
   (message "Reply cancelled"))
 
+(defun meshmonitor-chat-keyboard-quit ()
+  "Cancel a pending reply context, or run `keyboard-quit'.
+Bound to \\[keyboard-quit] so the usual cancel key clears an active
+reply before falling back to the standard quit behaviour."
+  (interactive)
+  (if meshmonitor-chat--reply-to
+      (meshmonitor-chat-cancel-reply)
+    (keyboard-quit)))
+
 (declare-function emojify-completing-read "emojify" (&optional prompt))
 
 (defun meshmonitor-chat-react ()
@@ -1700,6 +1710,10 @@ Return alist of (NODE-ID . LAST-MESSAGE-ALIST)."
                 #'meshmonitor-chat-node-list-open)
     (define-key map (kbd "g")
                 #'meshmonitor-chat-node-list-refresh)
+    (define-key map (kbd "d")
+                #'meshmonitor-chat-node-list-open)
+    (define-key map (kbd "o")
+                #'meshmonitor-chat-node-list-toggle-online)
     (define-key map (kbd "t")
                 #'meshmonitor-chat-traceroute)
     (define-key map (kbd "p")
@@ -1766,6 +1780,9 @@ Refuses if the node has not exchanged encryption keys."
 (defvar meshmonitor-chat--online-threshold 900
   "Seconds since last heard to consider a node online (default 15 min).")
 
+(defvar-local meshmonitor-chat--node-list-online-only nil
+  "Non-nil means the node list shows only online nodes.")
+
 (defun meshmonitor-chat--node-online-p (last-heard)
   "Return non-nil if LAST-HEARD timestamp is recent enough."
   (and last-heard (numberp last-heard) (> last-heard 0)
@@ -1788,16 +1805,31 @@ Refuses if the node has not exchanged encryption keys."
                       (alist-get 'hasPKC node)))
                 (indicator (concat (if online "🟢" "⚫")
                                    (if pkc " 🔑" ""))))
-           (push (list key
-                       (vector (number-to-string hops)
-                               (format "%s %s" indicator name)
-                               key
-                               (meshmonitor-chat--format-last-heard
-                                last-heard)))
-                 entries))))
+           (when (or (not meshmonitor-chat--node-list-online-only)
+                     online)
+             (push (list key
+                         (vector (number-to-string hops)
+                                 (format "%s %s" indicator name)
+                                 key
+                                 (meshmonitor-chat--format-last-heard
+                                  last-heard)))
+                   entries)))))
      meshmonitor-chat--nodes)
     (setq tabulated-list-entries entries)
     (tabulated-list-print t)))
+
+(defun meshmonitor-chat-node-list-toggle-online ()
+  "Toggle between showing all nodes and only online nodes.
+A node counts as online when it was last heard within
+`meshmonitor-chat--online-threshold' seconds."
+  (interactive)
+  (setq meshmonitor-chat--node-list-online-only
+        (not meshmonitor-chat--node-list-online-only))
+  (meshmonitor-chat--populate-node-list)
+  (message "MeshMonitor: showing %s nodes"
+           (if meshmonitor-chat--node-list-online-only
+               "only online"
+             "all")))
 
 ;;;; Unread messages mode
 
