@@ -253,7 +253,17 @@ Key options:
 - `meshmonitor-chat-poll-interval` (default `10`): seconds between polling for new messages.
 - `meshmonitor-chat-message-limit` (default `50`): number of messages to fetch per request.
 - `meshmonitor-chat-timestamp-format` (default `"%H:%M"`): format for message timestamps.
-- `meshmonitor-chat-notify` (default `t`): enable desktop notifications for new messages (via D-Bus).
+- `meshmonitor-chat-notify` (default `nil`): notifications for incoming messages. `nil` never notifies, `highlights` notifies only for replies to you, mentions of you and direct messages (like `erc-notifications-mode`), and `all` (or `t`) notifies for every message.
+- `meshmonitor-chat-notify-method` (default `native`): how notifications are delivered. `native` shows an OS notification (on macOS via `terminal-notifier` when installed, otherwise `osascript`; on other systems via the D-Bus `notifications` library or `notify-send`), `minibuffer` uses the echo area, `both` uses both, or a function called with `(TITLE BODY TYPE)`.
+- `meshmonitor-chat-highlight` (default `t`): highlight replies and mentions of you in the buffer with `meshmonitor-chat-highlight-face`, regardless of notification settings.
+- `meshmonitor-chat-keywords` (default `nil`): extra words that count as a mention of you (case-insensitive). Your node long and short names are always treated as mentions.
+
+Notifications inspired by ERC: a message is a "highlight" when it replies to one of your messages, mentions you by name (or a keyword), or is a direct message. Example configuration:
+
+```elisp
+(setq meshmonitor-chat-notify 'highlights      ; only replies, mentions and DMs
+      meshmonitor-chat-notify-method 'native)  ; native OS banner
+```
 
 Username/password authentication is also supported via `meshmonitor-chat-username` and `meshmonitor-chat-password` if no token is provided.
 

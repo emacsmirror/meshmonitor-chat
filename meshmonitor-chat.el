@@ -99,9 +99,50 @@ the first source the configured token or session can read."
   "Seconds between polling for new messages."
   :type 'integer)
 
-(defcustom meshmonitor-chat-notify t
-  "Non-nil means show desktop notifications for new messages."
+(defcustom meshmonitor-chat-notify nil
+  "Control notifications for incoming messages.
+Possible values:
+
+- nil          Never notify.
+- `highlights' Only notify for replies to you, mentions of you and
+               direct messages.
+- `all' (or t) Notify for every incoming message.
+
+Inspired by `erc-notifications-mode', where notifications fire on
+your nick being mentioned or on private messages."
+  :type '(choice (const :tag "Never" nil)
+                 (const :tag "Only replies, mentions and DMs" highlights)
+                 (const :tag "All messages" all)))
+
+(defcustom meshmonitor-chat-notify-method 'native
+  "How to deliver notifications selected by `meshmonitor-chat-notify'.
+Possible values:
+
+- `native'     Show a native operating-system notification.  On macOS
+               this uses `terminal-notifier' when available, otherwise
+               `osascript'.  On other systems it uses the D-Bus
+               `notifications' library or the `notify-send' command.
+- `minibuffer' Show the notification in the echo area.
+- `both'       Use both the native and minibuffer methods.
+- a function   Called with (TITLE BODY TYPE) to deliver the
+               notification yourself.  TYPE is one of `reply',
+               `mention', `dm' or `message'."
+  :type '(choice (const :tag "Native OS notification" native)
+                 (const :tag "Echo area (minibuffer)" minibuffer)
+                 (const :tag "Both native and echo area" both)
+                 (function :tag "Custom function")))
+
+(defcustom meshmonitor-chat-highlight t
+  "Non-nil means highlight replies and mentions of you in the buffer.
+Analogous to the `erc-match' module: highlighted messages get the
+`meshmonitor-chat-highlight-face' regardless of notification settings."
   :type 'boolean)
+
+(defcustom meshmonitor-chat-keywords nil
+  "Extra words that count as a mention of you.
+Matching is case-insensitive.  Similar to `erc-keywords'.
+Your node long and short names are always treated as mentions."
+  :type '(repeat string))
 
 (defcustom meshmonitor-chat-message-limit 50
   "Number of messages to fetch per request."
@@ -144,6 +185,11 @@ the first source the configured token or session can read."
 (defface meshmonitor-chat-delivery-failed-face
   '((t :foreground "red"))
   "Face for failed delivery icon.")
+
+(defface meshmonitor-chat-highlight-face
+  '((t :weight bold :inherit highlight))
+  "Face for messages that reply to you or mention you.
+Analogous to `erc-current-nick-face'.")
 
 ;;;; Internal state
 
@@ -217,6 +263,10 @@ the first source the configured token or session can read."
 
 (defvar-local meshmonitor-chat--reactions nil
   "Hash table mapping requestId to list of (EMOJI . SENDER) pairs.")
+
+(defvar-local meshmonitor-chat--my-request-ids nil
+  "Hash table of request ids for messages sent by the local node.
+Used to detect replies directed at you.")
 
 ;;;; Timestamp helpers
 
@@ -679,6 +729,8 @@ Provides an input prompt at the bottom with message history above."
   (setq-local meshmonitor-chat--pending-deliveries nil)
   (setq-local meshmonitor-chat--reactions
               (make-hash-table :test 'equal))
+  (setq-local meshmonitor-chat--my-request-ids
+              (make-hash-table :test 'equal))
   (setq-local meshmonitor-chat--last-timestamp nil)
   (setq mode-line-process
         '(" " (:eval (meshmonitor-chat--mode-line-status))))
@@ -786,7 +838,7 @@ Handles marker manipulation and cursor restoration."
 (defun meshmonitor-chat--insert-msg (buffer ts sender text
                                             &optional selfp sysp
                                             request-id from-id
-                                            reply-to-name msg)
+                                            reply-to-name msg highlight)
   "Insert a chat message into BUFFER.
 TS is the timestamp, SENDER the display name, TEXT the content.
 SELFP non-nil marks the message as from the local node.
@@ -794,7 +846,9 @@ SYSP non-nil renders a system notification instead.
 REQUEST-ID is stored as text property for reply support.
 FROM-ID is the sender node ID for opening DMs.
 REPLY-TO-NAME shows a reply indicator when non-nil.
-MSG is the full message alist, stored for the info command."
+MSG is the full message alist, stored for the info command.
+HIGHLIGHT, when `reply' or `mention' and `meshmonitor-chat-highlight'
+is non-nil, renders the message with `meshmonitor-chat-highlight-face'."
   (meshmonitor-chat--insert-at-prompt
    buffer
    (lambda ()
@@ -821,7 +875,11 @@ MSG is the full message alist, stored for the info command."
        'read-only t
        'rear-nonsticky t
        'front-sticky t
-       'face (when sysp 'meshmonitor-chat-system-face)
+       'face (cond
+              (sysp 'meshmonitor-chat-system-face)
+              ((and (memq highlight '(reply mention))
+                    meshmonitor-chat-highlight)
+               'meshmonitor-chat-highlight-face))
        'meshmonitor-chat-msg-text text
        'meshmonitor-chat-request-id request-id
        'meshmonitor-chat-sender sender
@@ -923,6 +981,61 @@ the id field (format nodeNum_requestId)."
                             nil limit)
                            limit)))
           found)))))
+
+;;;; Highlight detection (replies and mentions)
+
+(defun meshmonitor-chat--my-nicks ()
+  "Return the list of names that count as a mention of you.
+Includes your node long and short names, your node id and the words
+in `meshmonitor-chat-keywords'."
+  (let ((nicks nil))
+    (when meshmonitor-chat--my-node-id
+      (let ((node (gethash meshmonitor-chat--my-node-id
+                           meshmonitor-chat--nodes)))
+        (when node
+          (dolist (key '(longName shortName))
+            (let ((name (alist-get key node)))
+              (when (and (stringp name) (not (string-empty-p name)))
+                (push name nicks)))))
+        (push meshmonitor-chat--my-node-id nicks)))
+    (append (nreverse nicks) meshmonitor-chat-keywords)))
+
+(defun meshmonitor-chat--word-match-p (word text)
+  "Return non-nil if WORD appears in TEXT, case-insensitively.
+Uses a whole-word match when WORD begins or ends with a word
+constituent, and a plain substring match otherwise (e.g. node ids
+starting with a bang)."
+  (let ((case-fold-search t))
+    (if (string-match-p "\\`\\w\\|\\w\\'" word)
+        (string-match-p (concat "\\<" (regexp-quote word) "\\>") text)
+      (string-match-p (regexp-quote word) text))))
+
+(defun meshmonitor-chat--text-mentions-me-p (text)
+  "Return non-nil if TEXT mentions you.
+Matches your node names and `meshmonitor-chat-keywords'."
+  (when (and (stringp text) (not (string-empty-p text)))
+    (seq-some (lambda (nick)
+                (and (stringp nick) (not (string-empty-p nick))
+                     (meshmonitor-chat--word-match-p nick text)))
+              (meshmonitor-chat--my-nicks))))
+
+(defun meshmonitor-chat--reply-to-me-p (msg buffer)
+  "Return non-nil if MSG is a reply to one of your messages in BUFFER."
+  (let ((reply-id (alist-get 'replyId msg)))
+    (and reply-id (buffer-live-p buffer)
+         (with-current-buffer buffer
+           (and meshmonitor-chat--my-request-ids
+                (gethash reply-id meshmonitor-chat--my-request-ids))))))
+
+(defun meshmonitor-chat--highlight-type (msg buffer text ttype)
+  "Return the highlight type of incoming MSG, or nil.
+Returns `reply' when MSG replies to one of your messages, `mention'
+when TEXT mentions you, `dm' when TTYPE is `dm', otherwise nil.
+BUFFER is the chat buffer the message belongs to."
+  (cond
+   ((meshmonitor-chat--reply-to-me-p msg buffer) 'reply)
+   ((meshmonitor-chat--text-mentions-me-p text) 'mention)
+   ((eq ttype 'dm) 'dm)))
 
 (defun meshmonitor-chat--find-request-id-pos (request-id)
   "Find buffer position of message with REQUEST-ID, or nil."
@@ -1057,19 +1170,28 @@ MESSAGES is a list of message alists from the API."
                                 buffer reply-id))
                    (delivery (when selfp
                                (meshmonitor-chat--msg-delivery-state
-                                msg))))
+                                msg)))
+                   (highlight
+                    (unless selfp
+                      (meshmonitor-chat--highlight-type
+                       msg buffer text
+                       (buffer-local-value
+                        'meshmonitor-chat--target-type buffer)))))
+              ;; Remember our own messages so replies to them can be
+              ;; detected as highlights later.
+              (when (and selfp req-id)
+                (with-current-buffer buffer
+                  (puthash req-id t
+                           meshmonitor-chat--my-request-ids)))
               (if (and selfp delivery)
                   (meshmonitor-chat--insert-sent-msg
                    buffer ts sender text delivery req-id msg)
                 (meshmonitor-chat--insert-msg
                  buffer ts sender text selfp nil req-id from
-                 reply-name msg)
-                (unless (or selfp (get-buffer-window buffer))
-                  (with-current-buffer buffer
-                    (meshmonitor-chat--notify
-                     sender text
-                     meshmonitor-chat--target-type
-                     meshmonitor-chat--target))))
+                 reply-name msg highlight)
+                (unless selfp
+                  (meshmonitor-chat--maybe-notify
+                   buffer sender text highlight)))
               (meshmonitor-chat--mark-seen
                buffer id req-id unix-ts)))))
       ;; Process emoji reactions.
@@ -2076,24 +2198,116 @@ Detects gaps from sleep/suspend and does a full fetch if needed."
 
 ;;;; Notifications
 
-(defun meshmonitor-chat--notify (sender text target-type target)
-  "Show desktop notification for a message from SENDER.
-TEXT is the message content, TARGET-TYPE and TARGET identify the chat."
-  (when meshmonitor-chat-notify
-    (let ((title (pcase target-type
+(defun meshmonitor-chat--maybe-notify (buffer sender text highlight)
+  "Maybe notify about a new message in BUFFER from SENDER.
+TEXT is the message content.  HIGHLIGHT is the highlight type
+symbol or nil.  The decision honors `meshmonitor-chat-notify':
+
+- nil          never notify.
+- `highlights' notify only when HIGHLIGHT is non-nil (reply, mention
+               or DM), even when the buffer is visible, unless it is
+               the currently selected window.
+- `all' or t   notify for any message, but only when the buffer has
+               no visible window (the classic behavior)."
+  (let ((mode meshmonitor-chat-notify)
+        (ttype (buffer-local-value 'meshmonitor-chat--target-type buffer))
+        (target (buffer-local-value 'meshmonitor-chat--target buffer)))
+    (cond
+     ((null mode))
+     ((eq mode 'highlights)
+      (when (and highlight
+                 (not (eq buffer (window-buffer (selected-window)))))
+        (meshmonitor-chat--notify sender text ttype target highlight)))
+     (t                                 ; `all' or t
+      (unless (get-buffer-window buffer)
+        (meshmonitor-chat--notify sender text ttype target
+                                  (or highlight 'message)))))))
+
+(defun meshmonitor-chat--notify (sender text target-type target
+                                        &optional type)
+  "Show a notification for a message from SENDER.
+TEXT is the message content, TARGET-TYPE and TARGET identify the chat.
+TYPE is one of `reply', `mention', `dm' or `message' and affects the
+title prefix and urgency.  Delivery is controlled by
+`meshmonitor-chat-notify-method'."
+  (let* ((prefix (pcase type
+                   ('reply "↩ ")
+                   ('mention "@ ")
+                   (_ "")))
+         (title (concat
+                 prefix
+                 (pcase target-type
                    ('channel (format "#%s"
                                      (meshmonitor-chat--channel-name
                                       target)))
                    ('dm sender)
-                   (_ "MeshMonitor")))
-          (body (truncate-string-to-width
-                 (format "%s: %s" sender text) 100 nil nil "...")))
-      (notifications-notify
-       :title title
-       :body body
-       :app-name "MeshMonitor"
-       :category "im.received"
-       :urgency 'normal))))
+                   (_ "MeshMonitor"))))
+         (body (truncate-string-to-width
+                (format "%s: %s" sender text) 100 nil nil "..."))
+         (urgent (memq type '(reply mention dm))))
+    (meshmonitor-chat--dispatch-notification
+     title body (or type 'message) urgent)))
+
+(defun meshmonitor-chat--dispatch-notification (title body type urgent)
+  "Deliver TITLE and BODY using `meshmonitor-chat-notify-method'.
+TYPE is the highlight type symbol.  URGENT non-nil raises priority."
+  (let ((method meshmonitor-chat-notify-method))
+    (cond
+     ((functionp method) (funcall method title body type))
+     ((eq method 'minibuffer)
+      (meshmonitor-chat--notify-minibuffer title body))
+     ((eq method 'both)
+      (meshmonitor-chat--notify-native title body urgent)
+      (meshmonitor-chat--notify-minibuffer title body))
+     (t
+      (meshmonitor-chat--notify-native title body urgent)))))
+
+(defun meshmonitor-chat--notify-minibuffer (title body)
+  "Show TITLE and BODY in the echo area."
+  (message "MeshMonitor %s: %s" title body))
+
+(defun meshmonitor-chat--notify-native (title body urgent)
+  "Show a native OS notification with TITLE and BODY.
+URGENT non-nil requests a higher priority where supported.  Falls
+back to the echo area when no native mechanism is available."
+  (cond
+   ((eq system-type 'darwin)
+    (meshmonitor-chat--notify-macos title body))
+   ((and (require 'notifications nil t)
+         (fboundp 'notifications-notify))
+    (notifications-notify
+     :title title :body body
+     :app-name "MeshMonitor"
+     :category "im.received"
+     :urgency (if urgent 'critical 'normal)))
+   ((executable-find "notify-send")
+    (call-process "notify-send" nil 0 nil
+                  "-a" "MeshMonitor"
+                  "-u" (if urgent "critical" "normal")
+                  title body))
+   (t (meshmonitor-chat--notify-minibuffer title body))))
+
+(defun meshmonitor-chat--applescript-quote (string)
+  "Return STRING quoted for use as an AppleScript string literal."
+  (concat "\""
+          (replace-regexp-in-string "\\([\"\\]\\)" "\\\\\\1" string)
+          "\""))
+
+(defun meshmonitor-chat--notify-macos (title body)
+  "Show a macOS notification with TITLE and BODY.
+Uses `terminal-notifier' when available, otherwise `osascript'."
+  (let ((tn (executable-find "terminal-notifier")))
+    (if tn
+        (call-process tn nil 0 nil
+                      "-title" title
+                      "-message" body
+                      "-group" "meshmonitor-chat"
+                      "-sender" "org.gnu.Emacs")
+      (call-process
+       "osascript" nil 0 nil
+       "-e" (format "display notification %s with title %s"
+                    (meshmonitor-chat--applescript-quote body)
+                    (meshmonitor-chat--applescript-quote title))))))
 
 ;;;; Cleanup
 
