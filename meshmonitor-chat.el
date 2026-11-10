@@ -513,6 +513,41 @@ Call CALLBACK with (STATUS . BODY)."
      "GET" (concat (meshmonitor-chat--v1-path "messages") "?" query)
      nil callback)))
 
+(defvar meshmonitor-chat--dm-fetch-limit 200
+  "Number of recent direct messages fetched for history and lists.")
+
+(defvar meshmonitor-chat--dm-poll-limit 50
+  "Number of recent direct messages fetched on each poll.")
+
+(defun meshmonitor-chat--dm-message-p (msg)
+  "Return non-nil if MSG is a direct message (channel -1)."
+  (equal (alist-get 'channel msg) -1))
+
+(defun meshmonitor-chat--dm-partner (msg)
+  "Return the node ID of the other party in direct message MSG.
+Return nil for channel messages, broadcasts or messages to ourselves."
+  (let* ((dm-p (meshmonitor-chat--dm-message-p msg))
+         (from (alist-get 'fromNodeId msg))
+         (to (alist-get 'toNodeId msg))
+         (partner (if (meshmonitor-chat--is-self-p msg) to from)))
+    (unless (or (not dm-p)
+                (null partner)
+                (equal partner "broadcast")
+                (equal partner meshmonitor-chat--my-node-id))
+      partner)))
+
+(defun meshmonitor-chat--fetch-dm-messages (limit callback)
+  "Fetch the LIMIT most recent direct messages.
+The server filters by channel -1 before applying LIMIT, unlike
+`fromNodeId' and `toNodeId', which it applies after LIMIT.
+Call CALLBACK with the list of messages, newest first."
+  (meshmonitor-chat--api-messages
+   `((channel . -1) (limit . ,limit))
+   (lambda (result)
+     (funcall callback
+              (seq-filter #'meshmonitor-chat--dm-message-p
+                          (and result (alist-get 'data (cdr result))))))))
+
 (defun meshmonitor-chat--api-send (text &optional channel to-node
                                              reply-id callback)
   "Send TEXT message to CHANNEL or TO-NODE.
@@ -1134,8 +1169,19 @@ poll can dedup even when the id string format changes."
   "Render MESSAGES into BUFFER with deduplication.
 MESSAGES is a list of message alists from the API."
   (when (and (buffer-live-p buffer) messages)
-    (let* ((text-msgs (seq-filter #'meshmonitor-chat--text-message-p
-                                  (copy-sequence messages)))
+    (let* ((target (buffer-local-value 'meshmonitor-chat--target buffer))
+           (dm-p (eq (buffer-local-value 'meshmonitor-chat--target-type
+                                         buffer)
+                     'dm))
+           (text-msgs
+            (seq-filter
+             (lambda (m)
+               (and (meshmonitor-chat--text-message-p m)
+                    ;; Keep channel posts by the partner out of DMs.
+                    (or (not dm-p)
+                        (equal (meshmonitor-chat--dm-partner m)
+                               target))))
+             messages))
            (sorted (sort text-msgs
                          (lambda (a b)
                            (< (meshmonitor-chat--parse-timestamp
@@ -1610,7 +1656,7 @@ metrics in a temporary buffer."
               (when msgs
                 (meshmonitor-chat--render-messages buf msgs)))))))
       ('dm
-       (meshmonitor-chat--fetch-dm-both-directions
+       (meshmonitor-chat--fetch-dm-history
         meshmonitor-chat--target meshmonitor-chat-message-limit
         (lambda (msgs)
           (when msgs
@@ -1754,54 +1800,35 @@ metrics in a temporary buffer."
          (with-current-buffer buf
            (meshmonitor-chat--populate-dm-list partners)))))))
 
+(defun meshmonitor-chat--conversation-message-p (msg)
+  "Return non-nil if direct MSG belongs in a conversation list.
+Reactions and non-text packets are excluded."
+  (and (meshmonitor-chat--text-message-p msg)
+       (not (meshmonitor-chat--reaction-p msg))))
+
 (defun meshmonitor-chat--fetch-dm-conversations (callback)
   "Fetch DM conversations and call CALLBACK with partner alist.
 Each element is (NODE-ID . LAST-MESSAGE-ALIST)."
-  (meshmonitor-chat--api-messages
-   `((limit . 200))
-   (lambda (result)
-     (let ((partners nil))
-       (when result
-         (let* ((msgs (alist-get 'data (cdr result)))
-                (dm-msgs (seq-filter
-                          (lambda (m)
-                            (and (equal (alist-get 'channel m) -1)
-                                 (meshmonitor-chat--text-message-p m)
-                                 (not (meshmonitor-chat--reaction-p
-                                       m))))
-                          msgs)))
-           (setq partners
-                 (meshmonitor-chat--extract-dm-partners
-                  dm-msgs))))
-       (funcall callback partners)))))
+  (meshmonitor-chat--fetch-dm-messages
+   meshmonitor-chat--dm-fetch-limit
+   (lambda (msgs)
+     (funcall callback (meshmonitor-chat--extract-dm-partners msgs)))))
 
 (defun meshmonitor-chat--extract-dm-partners (messages)
   "Extract unique DM conversation partners from MESSAGES.
 Return alist of (NODE-ID . LAST-MESSAGE-ALIST)."
   (let ((partners (make-hash-table :test 'equal)))
     (dolist (msg messages)
-      (let ((from (alist-get 'fromNodeId msg))
-            (to (alist-get 'toNodeId msg))
+      (let ((partner (meshmonitor-chat--dm-partner msg))
             (ts (meshmonitor-chat--parse-timestamp
                  (alist-get 'timestamp msg))))
-        (let ((partner
-               (cond
-                ((and meshmonitor-chat--my-node-id
-                      (equal from meshmonitor-chat--my-node-id))
-                 to)
-                ((and meshmonitor-chat--my-node-id
-                      (equal to meshmonitor-chat--my-node-id))
-                 from)
-                (t from))))
-          (when (and partner
-                     (not (equal partner "broadcast"))
-                     (not (equal partner
-                                 meshmonitor-chat--my-node-id)))
-            (let ((existing (gethash partner partners)))
-              (when (or (null existing)
-                        (> ts (meshmonitor-chat--parse-timestamp
-                               (alist-get 'timestamp existing))))
-                (puthash partner msg partners)))))))
+        (when (and partner
+                   (meshmonitor-chat--conversation-message-p msg))
+          (let ((existing (gethash partner partners)))
+            (when (or (null existing)
+                      (> ts (meshmonitor-chat--parse-timestamp
+                             (alist-get 'timestamp existing))))
+              (puthash partner msg partners))))))
     (let ((result nil))
       (maphash (lambda (k v) (push (cons k v) result)) partners)
       result)))
@@ -2004,46 +2031,37 @@ A node counts as online when it was last heard within
 (defun meshmonitor-chat--fetch-unread (callback)
   "Fetch messages and find unread conversations.
 Call CALLBACK with alist of (NODE-ID COUNT LAST-MSG)."
-  (meshmonitor-chat--api-messages
-   `((limit . 200))
-   (lambda (result)
-     (let ((unread nil))
-       (when result
-         (let ((msgs (alist-get 'data (cdr result))))
-           (when msgs
-             (let ((by-node (make-hash-table :test 'equal)))
-               (dolist (msg msgs)
-                 (let* ((from (alist-get 'fromNodeId msg))
-                        (ts (meshmonitor-chat--parse-timestamp
-                             (alist-get 'timestamp msg)))
-                        (is-dm (and (equal (alist-get 'channel msg)
-                                           -1)
-                                    (meshmonitor-chat--text-message-p
-                                     msg)
-                                    (not (meshmonitor-chat--reaction-p
-                                          msg))))
-                        (is-self (meshmonitor-chat--is-self-p msg)))
-                   (when (and is-dm (not is-self) from)
-                     (let ((read-ts
-                            (or (gethash (cons 'dm from)
-                                         meshmonitor-chat--read-timestamps)
-                                0)))
-                       (when (> ts read-ts)
-                         (let ((entry (gethash from by-node)))
-                           (if entry
-                               (progn
-                                 (cl-incf (car entry))
-                                 (when (> ts
-                                          (meshmonitor-chat--parse-timestamp
-                                           (alist-get 'timestamp
-                                                      (cdr entry))))
-                                   (setcdr entry msg)))
-                             (puthash from (cons 1 msg)
-                                      by-node))))))))
-               (maphash (lambda (k v)
-                          (push (list k (car v) (cdr v)) unread))
-                        by-node)))))
-       (funcall callback unread)))))
+  (meshmonitor-chat--fetch-dm-messages
+   meshmonitor-chat--dm-fetch-limit
+   (lambda (msgs)
+     (funcall callback (meshmonitor-chat--extract-unread msgs)))))
+
+(defun meshmonitor-chat--extract-unread (messages)
+  "Return unread conversations found in direct MESSAGES.
+Each element is (NODE-ID COUNT LAST-MSG)."
+  (let ((by-node (make-hash-table :test 'equal))
+        (unread nil))
+    (dolist (msg messages)
+      (let ((from (alist-get 'fromNodeId msg))
+            (ts (meshmonitor-chat--parse-timestamp
+                 (alist-get 'timestamp msg))))
+        (when (and from
+                   (meshmonitor-chat--conversation-message-p msg)
+                   (not (meshmonitor-chat--is-self-p msg))
+                   (> ts (or (gethash (cons 'dm from)
+                                      meshmonitor-chat--read-timestamps)
+                             0)))
+          (let ((entry (gethash from by-node)))
+            (if entry
+                (progn
+                  (cl-incf (car entry))
+                  (when (> ts (meshmonitor-chat--parse-timestamp
+                               (alist-get 'timestamp (cdr entry))))
+                    (setcdr entry msg)))
+              (puthash from (cons 1 msg) by-node))))))
+    (maphash (lambda (k v) (push (list k (car v) (cdr v)) unread))
+             by-node)
+    unread))
 
 (defun meshmonitor-chat--populate-unread-list (unread)
   "Populate current buffer with UNREAD conversation data.
@@ -2082,40 +2100,40 @@ Each element of UNREAD is (NODE-ID COUNT LAST-MSG)."
            (when msgs
              (meshmonitor-chat--render-messages buf msgs))))))))
 
-(defun meshmonitor-chat--fetch-dm-both-directions (node-id limit
-                                                           callback)
-  "Fetch DM messages with NODE-ID in both directions.
-LIMIT is the max messages per direction.
-Call CALLBACK with the merged message list."
-  (let ((all-messages nil)
-        (pending 2))
-    (let ((handler
-           (lambda (result)
-             (when result
-               (let ((msgs (alist-get 'data (cdr result))))
-                 (when msgs
-                   (setq all-messages
-                         (append msgs all-messages)))))
-             (setq pending (1- pending))
-             (when (zerop pending)
-               (funcall callback all-messages)))))
-      (meshmonitor-chat--api-messages
-       `((toNodeId . ,node-id) (limit . ,limit)) handler)
-      (meshmonitor-chat--api-messages
-       `((fromNodeId . ,node-id) (limit . ,limit)) handler))))
+(defun meshmonitor-chat--fetch-dm-history (node-id limit callback)
+  "Fetch up to LIMIT recent direct messages exchanged with NODE-ID.
+Call CALLBACK with the message list."
+  (meshmonitor-chat--fetch-dm-messages
+   (max limit meshmonitor-chat--dm-fetch-limit)
+   (lambda (msgs)
+     (funcall callback
+              (seq-take
+               (seq-filter (lambda (m)
+                             (equal (meshmonitor-chat--dm-partner m)
+                                    node-id))
+                           msgs)
+               limit)))))
 
 (defun meshmonitor-chat-open-dm (node-id)
   "Open a DM chat buffer with NODE-ID and load history."
   (meshmonitor-chat--ensure-connected)
   (let ((buf (meshmonitor-chat--get-or-create-buffer 'dm node-id)))
     (switch-to-buffer buf)
-    (meshmonitor-chat--fetch-dm-both-directions
+    (meshmonitor-chat--fetch-dm-history
      node-id meshmonitor-chat-message-limit
      (lambda (msgs)
        (when msgs
          (meshmonitor-chat--render-messages buf msgs))))))
 
 ;;;; Polling
+
+(defvar meshmonitor-chat--dm-seen-ids (make-hash-table :test 'equal)
+  "Direct message ids already handled by the poll, in any buffer.")
+
+(defvar meshmonitor-chat--dm-baseline-done nil
+  "Non-nil once the poll has recorded the existing direct messages.
+The first poll after connecting only records them, so old messages
+do not trigger notifications.")
 
 (defun meshmonitor-chat--start-polling ()
   "Start the periodic message polling timer."
@@ -2132,8 +2150,15 @@ Call CALLBACK with the merged message list."
     (cancel-timer meshmonitor-chat--poll-timer)
     (setq meshmonitor-chat--poll-timer nil)))
 
+(defun meshmonitor-chat--chat-buffer (ttype target)
+  "Return the live chat buffer for TTYPE and TARGET, or nil."
+  (let ((buf (alist-get (cons ttype target)
+                        meshmonitor-chat--chat-buffers
+                        nil nil #'equal)))
+    (and (buffer-live-p buf) buf)))
+
 (defun meshmonitor-chat--poll ()
-  "Poll for new messages in all open chat buffers.
+  "Poll for new messages in open channels and in all direct messages.
 Detects gaps from sleep/suspend and does a full fetch if needed."
   (when meshmonitor-chat--connected
     (let* ((now (float-time))
@@ -2144,57 +2169,64 @@ Detects gaps from sleep/suspend and does a full fetch if needed."
       (setq meshmonitor-chat--chat-buffers
             (seq-filter (lambda (e) (buffer-live-p (cdr e)))
                         meshmonitor-chat--chat-buffers))
+      ;; Channels: the server returns the newest messages per channel.
       (dolist (entry meshmonitor-chat--chat-buffers)
-        (let* ((key (car entry))
-               (buf (cdr entry))
-               (ttype (car key))
-               (target (cdr key))
-               (since (unless gap-p
-                        (with-current-buffer buf
-                          meshmonitor-chat--last-timestamp)))
-               (limit (if gap-p
-                          meshmonitor-chat-message-limit 20))
-               (render-cb
-                (lambda (result)
-                  (when result
-                    (let ((msgs (alist-get 'data (cdr result))))
-                      (when msgs
-                        (meshmonitor-chat--render-messages
-                         buf msgs)))))))
-          (pcase ttype
-            ('channel
-             (let ((params `((channel . ,target)
-                             (limit . ,limit))))
-               (when since
-                 (push `(since . ,(1+ since)) params))
-               (meshmonitor-chat--api-messages params render-cb)))
-            ('dm
-             (let ((params-from
-                    `((fromNodeId . ,target) (limit . ,limit)))
-                   (params-to
-                    `((toNodeId . ,target) (limit . ,limit)))
-                   (all-msgs nil)
-                   (dm-pending 2))
-               (when since
-                 (push `(since . ,(1+ since)) params-from)
-                 (push `(since . ,(1+ since)) params-to))
-               (let ((dm-handler
-                      (lambda (result)
-                        (when result
-                          (let ((msgs (alist-get 'data
-                                                 (cdr result))))
-                            (when msgs
-                              (setq all-msgs
-                                    (append msgs all-msgs)))))
-                        (setq dm-pending (1- dm-pending))
-                        (when (zerop dm-pending)
-                          (when all-msgs
-                            (meshmonitor-chat--render-messages
-                             buf all-msgs))))))
-                 (meshmonitor-chat--api-messages
-                  params-from dm-handler)
-                 (meshmonitor-chat--api-messages
-                  params-to dm-handler))))))))))
+        (let ((key (car entry))
+              (buf (cdr entry)))
+          (when (eq (car key) 'channel)
+            (meshmonitor-chat--api-messages
+             `((channel . ,(cdr key))
+               (limit . ,(if gap-p meshmonitor-chat-message-limit 20)))
+             (lambda (result)
+               (when result
+                 (let ((msgs (alist-get 'data (cdr result))))
+                   (when msgs
+                     (meshmonitor-chat--render-messages buf msgs)))))))))
+      ;; Direct messages: a single request covers every conversation,
+      ;; including those without an open buffer.
+      (meshmonitor-chat--fetch-dm-messages
+       (if gap-p meshmonitor-chat--dm-fetch-limit
+         meshmonitor-chat--dm-poll-limit)
+       #'meshmonitor-chat--handle-dm-poll))))
+
+(defun meshmonitor-chat--handle-dm-poll (msgs)
+  "Dispatch polled direct MSGS to their buffers and notify.
+Messages for conversations without an open buffer raise a
+notification, and the DM and unread lists are refreshed."
+  (let ((by-partner (make-hash-table :test 'equal))
+        (new-p nil))
+    (dolist (msg msgs)
+      (let ((partner (meshmonitor-chat--dm-partner msg))
+            (id (alist-get 'id msg)))
+        (when partner
+          (push msg (gethash partner by-partner))
+          (when (and id (not (gethash id meshmonitor-chat--dm-seen-ids)))
+            (puthash id t meshmonitor-chat--dm-seen-ids)
+            (setq new-p t)
+            (when (and meshmonitor-chat--dm-baseline-done
+                       meshmonitor-chat-notify
+                       (not (meshmonitor-chat--chat-buffer 'dm partner))
+                       (not (meshmonitor-chat--is-self-p msg))
+                       (meshmonitor-chat--conversation-message-p msg))
+              (let ((text (or (alist-get 'text msg) "")))
+                (meshmonitor-chat--notify
+                 (meshmonitor-chat--node-name partner) text 'dm partner
+                 (meshmonitor-chat--highlight-type msg nil text 'dm))))))))
+    (maphash (lambda (partner partner-msgs)
+               (let ((buf (meshmonitor-chat--chat-buffer 'dm partner)))
+                 (when buf
+                   (meshmonitor-chat--render-messages buf partner-msgs))))
+             by-partner)
+    (when (and new-p meshmonitor-chat--dm-baseline-done)
+      (meshmonitor-chat--refresh-dm-lists))
+    (setq meshmonitor-chat--dm-baseline-done t)))
+
+(defun meshmonitor-chat--refresh-dm-lists ()
+  "Refresh the DM and unread list buffers if they are open."
+  (when (buffer-live-p (get-buffer "*MeshMonitor: Direct Messages*"))
+    (meshmonitor-chat-dm-list-refresh))
+  (when (buffer-live-p (get-buffer "*MeshMonitor: Unread*"))
+    (meshmonitor-chat-unread-list-refresh)))
 
 ;;;; Notifications
 
@@ -2324,8 +2356,10 @@ Uses `terminal-notifier' when available, otherwise `osascript'."
         meshmonitor-chat--my-node-id nil
         meshmonitor-chat--my-node-num nil
         meshmonitor-chat--channels nil
-        meshmonitor-chat--chat-buffers nil)
+        meshmonitor-chat--chat-buffers nil
+        meshmonitor-chat--dm-baseline-done nil)
   (clrhash meshmonitor-chat--nodes)
+  (clrhash meshmonitor-chat--dm-seen-ids)
   (clrhash meshmonitor-chat--read-timestamps)
   (message "MeshMonitor: disconnected"))
 

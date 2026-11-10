@@ -140,7 +140,7 @@ I can see 12 nodes from up here
 - **Request position**: press `p` on a node to request its position.
 - **Key exchange check**: DM is blocked for nodes without encryption keys (no PKC).
 - **Desktop notifications**: get notified when new messages arrive in background buffers.
-- **Polling**: automatic periodic fetch of new messages in open chat buffers. Auto-recovers after sleep/suspend.
+- **Polling**: automatic periodic fetch of new messages in open channel buffers and in every direct message conversation. New DMs show up live in their buffer, refresh the DM and unread lists, and notify you even when the conversation is not open. Auto-recovers after sleep/suspend.
 - **Refresh**: press `C-c C-l` to reload the full message history in any chat buffer.
 - **Input size indicator**: mode-line shows byte count with warnings for large messages (LoRa limit ~200 bytes per part, max 3 parts).
 - **UTF-8 support**: correctly displays accented characters and emojis from mesh nodes.
